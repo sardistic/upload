@@ -7,15 +7,32 @@ import { fileURLToPath } from "node:url";
 import { UploadStore } from "./store.js";
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
-const publicDirectory = path.resolve(currentDirectory, "..", "public");
+const projectDirectory = path.resolve(currentDirectory, "..");
+const publicDirectory = path.join(projectDirectory, "public");
+const dependencyDirectory = path.join(projectDirectory, "node_modules");
 const staticFiles = new Map([
-  ["/", ["index.html", "text/html; charset=utf-8"]],
-  ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
-  ["/theme.js", ["theme.js", "text/javascript; charset=utf-8"]],
-  ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
-  ["/favicon.svg", ["favicon.svg", "image/svg+xml"]],
-  ["/site.webmanifest", ["site.webmanifest", "application/manifest+json"]],
+  ["/", [path.join(publicDirectory, "index.html"), "text/html; charset=utf-8", false]],
+  ["/app.js", [path.join(publicDirectory, "app.js"), "text/javascript; charset=utf-8", false]],
+  ["/ocr.js", [path.join(publicDirectory, "ocr.js"), "text/javascript; charset=utf-8", false]],
+  ["/theme.js", [path.join(publicDirectory, "theme.js"), "text/javascript; charset=utf-8", false]],
+  ["/styles.css", [path.join(publicDirectory, "styles.css"), "text/css; charset=utf-8", false]],
+  ["/favicon.svg", [path.join(publicDirectory, "favicon.svg"), "image/svg+xml", false]],
+  ["/site.webmanifest", [path.join(publicDirectory, "site.webmanifest"), "application/manifest+json", false]],
+  ["/vendor/tesseract/tesseract.min.js", [path.join(dependencyDirectory, "tesseract.js", "dist", "tesseract.min.js"), "text/javascript; charset=utf-8", true]],
+  ["/vendor/tesseract/worker.min.js", [path.join(dependencyDirectory, "tesseract.js", "dist", "worker.min.js"), "text/javascript; charset=utf-8", true]],
+  ["/vendor/tesseract/lang/eng.traineddata.gz", [path.join(dependencyDirectory, "@tesseract.js-data", "eng", "4.0.0", "eng.traineddata.gz"), "application/gzip", true]],
 ]);
+
+for (const variant of ["", "-lstm", "-simd", "-simd-lstm", "-relaxedsimd", "-relaxedsimd-lstm"]) {
+  for (const suffix of [".js", ".wasm", ".wasm.js"]) {
+    const filename = `tesseract-core${variant}${suffix}`;
+    staticFiles.set(`/vendor/tesseract/core/${filename}`, [
+      path.join(dependencyDirectory, "tesseract.js-core", filename),
+      suffix === ".wasm" ? "application/wasm" : "text/javascript; charset=utf-8",
+      true,
+    ]);
+  }
+}
 
 const adjectives = [
   "amber", "ashen", "brisk", "cedar", "cobalt", "cosmic", "crimson", "dusky",
@@ -244,6 +261,34 @@ function cleanTitle(value, fallback = "Untitled image") {
   return title || fallback;
 }
 
+function cleanOcrText(value) {
+  return String(value ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim()
+    .slice(0, 20_000);
+}
+
+function cleanTags(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((tag) => String(tag ?? "")
+    .toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9 -]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 32))
+    .filter(Boolean))]
+    .slice(0, 8);
+}
+
+function cleanConfidence(value) {
+  const confidence = Number(value);
+  return Number.isFinite(confidence) ? Math.max(0, Math.min(100, Math.round(confidence))) : null;
+}
+
 function makeSlug() {
   const adjective = adjectives[randomBytes(1)[0] % adjectives.length];
   const noun = nouns[randomBytes(1)[0] % nouns.length];
@@ -266,6 +311,11 @@ function serializeUpload(upload, config) {
     height: upload.height ?? null,
     visibility: upload.visibility,
     views: upload.views,
+    tags: upload.tags ?? [],
+    ocrText: upload.ocrText ?? "",
+    ocrConfidence: upload.ocrConfidence ?? null,
+    ocrUpdatedAt: upload.ocrUpdatedAt ?? null,
+    titleSource: upload.titleSource ?? "manual",
     createdAt: upload.createdAt,
     updatedAt: upload.updatedAt,
   };
@@ -342,12 +392,12 @@ export async function createSardropServer(overrides = {}) {
       }
 
       if (request.method === "GET" && staticFiles.has(url.pathname)) {
-        const [filename, contentType] = staticFiles.get(url.pathname);
-        const body = await readFile(path.join(publicDirectory, filename));
+        const [filename, contentType, immutable] = staticFiles.get(url.pathname);
+        const body = await readFile(filename);
         response.writeHead(200, baseHeaders({
           "Content-Type": contentType,
-          "Cache-Control": filename === "index.html" ? "no-cache" : "public, max-age=3600",
-          "Content-Security-Policy": "default-src 'self'; img-src 'self' https://veles.cards blob: data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+          "Cache-Control": url.pathname === "/" ? "no-cache" : (immutable ? "public, max-age=31536000, immutable" : "public, max-age=3600"),
+          "Content-Security-Policy": "default-src 'self'; img-src 'self' https://veles.cards blob: data:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
         }));
         return response.end(body);
       }
@@ -429,6 +479,11 @@ export async function createSardropServer(overrides = {}) {
           height: detected.height ?? positiveInteger(request.headers["x-image-height"]),
           visibility,
           views: 0,
+          tags: [],
+          ocrText: "",
+          ocrConfidence: null,
+          ocrUpdatedAt: null,
+          titleSource: "filename",
           createdAt: now,
           updatedAt: now,
         };
@@ -457,7 +512,9 @@ export async function createSardropServer(overrides = {}) {
       if (itemMatch && request.method === "PATCH") {
         if (!requireOwner(request, response, config)) return;
         if (!isSameOrigin(request, config)) return sendJson(response, 403, { error: "Origin not allowed" });
-        const body = await readJson(request);
+        const body = await readJson(request, 65_536);
+        const existingUpload = store.findById(itemMatch[1]);
+        if (!existingUpload) return sendJson(response, 404, { error: "Upload not found" });
         const changes = {};
         if (Object.hasOwn(body, "visibility")) {
           changes.visibility = parseVisibility(body.visibility);
@@ -465,7 +522,22 @@ export async function createSardropServer(overrides = {}) {
         } else if (Object.hasOwn(body, "isPrivate")) {
           changes.visibility = body.isPrivate ? "private" : "unlisted";
         }
-        if (Object.hasOwn(body, "title")) changes.title = cleanTitle(body.title);
+        if (Object.hasOwn(body, "title")) {
+          changes.title = cleanTitle(body.title);
+          changes.titleSource = "manual";
+        }
+        if (Object.hasOwn(body, "tags")) changes.tags = cleanTags(body.tags);
+        if (body.ocr && typeof body.ocr === "object") {
+          changes.ocrText = cleanOcrText(body.ocr.text);
+          changes.ocrConfidence = cleanConfidence(body.ocr.confidence);
+          changes.tags = cleanTags(body.ocr.tags);
+          changes.ocrUpdatedAt = new Date().toISOString();
+          const suggestedTitle = cleanTitle(body.ocr.suggestedTitle, "");
+          if (body.ocr.applyTitle && suggestedTitle && ["filename", "ocr"].includes(existingUpload.titleSource)) {
+            changes.title = suggestedTitle;
+            changes.titleSource = "ocr";
+          }
+        }
         if (!Object.keys(changes).length) return sendJson(response, 400, { error: "No supported changes provided" });
         const upload = await store.update(itemMatch[1], changes);
         if (!upload) return sendJson(response, 404, { error: "Upload not found" });

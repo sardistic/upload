@@ -1,12 +1,20 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+function normalizeTags(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .map((tag) => String(tag ?? "").trim().slice(0, 32))
+    .filter(Boolean))]
+    .slice(0, 8);
+}
+
 export class UploadStore {
   constructor(dataDir) {
     this.dataDir = dataDir;
     this.imagesDir = path.join(dataDir, "images");
     this.metadataPath = path.join(dataDir, "metadata.json");
-    this.state = { version: 2, uploads: [] };
+    this.state = { version: 3, uploads: [] };
     this.mutationQueue = Promise.resolve();
   }
 
@@ -15,17 +23,22 @@ export class UploadStore {
 
     try {
       const stored = JSON.parse(await readFile(this.metadataPath, "utf8"));
-      if (![1, 2].includes(stored?.version) || !Array.isArray(stored.uploads)) {
+      if (![1, 2, 3].includes(stored?.version) || !Array.isArray(stored.uploads)) {
         throw new Error("Unsupported metadata format");
       }
-      const needsMigration = stored.version !== 2 || stored.uploads.some((upload) => (
+      const needsMigration = stored.version !== 3 || stored.uploads.some((upload) => (
         !["public", "unlisted", "private"].includes(upload.visibility)
         || !Number.isInteger(upload.views)
         || upload.views < 0
         || Object.hasOwn(upload, "isPrivate")
+        || !Array.isArray(upload.tags)
+        || typeof upload.ocrText !== "string"
+        || !["filename", "ocr", "manual"].includes(upload.titleSource)
+        || !Object.hasOwn(upload, "ocrConfidence")
+        || !Object.hasOwn(upload, "ocrUpdatedAt")
       ));
       this.state = {
-        version: 2,
+        version: 3,
         uploads: stored.uploads.map((upload) => {
           const { isPrivate, ...rest } = upload;
           return {
@@ -34,6 +47,15 @@ export class UploadStore {
               ? upload.visibility
               : (isPrivate ? "private" : "public"),
             views: Number.isInteger(upload.views) && upload.views >= 0 ? upload.views : 0,
+            tags: normalizeTags(upload.tags),
+            ocrText: typeof upload.ocrText === "string" ? upload.ocrText.slice(0, 20_000) : "",
+            ocrConfidence: Number.isFinite(upload.ocrConfidence)
+              ? Math.max(0, Math.min(100, Math.round(upload.ocrConfidence)))
+              : null,
+            ocrUpdatedAt: typeof upload.ocrUpdatedAt === "string" ? upload.ocrUpdatedAt : null,
+            titleSource: ["filename", "ocr", "manual"].includes(upload.titleSource)
+              ? upload.titleSource
+              : "manual",
           };
         }),
       };

@@ -21,3 +21,11 @@ The public and owner interfaces use `upload.sardistic.com` as the product name. 
 Both dark and light palettes are supported, with dark as the deterministic first-visit default rather than inheriting the operating-system setting. A self-hosted, first-party script applies any saved preference before the stylesheet loads, avoiding a light flash; the header switch persists the choice in local storage. The document, manifest, browser theme color, and fallback favicon all advertise the dark default.
 
 The anonymous splash page presents the public gallery as the primary experience. Owner authentication remains protected by the existing password and signed session, but its form opens from a small key control in the header instead of occupying the hero. This is a presentation choice, not a security boundary; access control continues to be enforced by the server.
+
+## 2026-08-13 — Browser-local OCR and owner-only search metadata
+
+OCR uses pinned, self-hosted Tesseract.js assets and the English trained-data package. Recognition runs only in the authenticated owner's browser, processes one image at a time, and downscales source images before recognition to bound client memory and CPU use. The worker and language model are loaded lazily and cached as immutable assets, so the server pays no per-scan API cost and image bytes are not sent to an OCR provider.
+
+Extracted text, confidence, and normalized tags are stored in metadata version 3 and returned only by the authenticated owner API. The anonymous public feed intentionally omits all OCR fields, even for Public images. OCR can name uploads whose title still comes from a generic filename, but a manual title becomes authoritative and is not overwritten by later rescans. Existing version 1 and 2 records migrate atomically with empty OCR metadata and manual title provenance.
+
+The interface is a flat, dark-first archive rather than a marketing-style hero composition. The splash gives the public index priority and keeps owner login behind the existing minimal header control; the authenticated view keeps upload, visibility, OCR, search, and management controls in a compact workbench.

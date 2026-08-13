@@ -1,3 +1,5 @@
+import { hasGenericImageName, recognizeLocally } from "/ocr.js?v=1";
+
 const state = {
   uploads: [],
   publicUploads: [],
@@ -8,6 +10,8 @@ const state = {
   deletingId: null,
   latestUpload: null,
   uploading: false,
+  autoOcr: true,
+  ocrJobs: new Map(),
 };
 
 const elements = {
@@ -27,6 +31,7 @@ const elements = {
   fileInput: document.querySelector("#file-input"),
   uploadVisibility: document.querySelector("#upload-visibility"),
   uploadQueue: document.querySelector("#upload-queue"),
+  autoOcr: document.querySelector("#auto-ocr"),
   latestResult: document.querySelector("#latest-result"),
   latestTitle: document.querySelector("#latest-title"),
   latestUrl: document.querySelector("#latest-url"),
@@ -45,6 +50,8 @@ const elements = {
   editDialog: document.querySelector("#edit-dialog"),
   editForm: document.querySelector("#edit-form"),
   editTitle: document.querySelector("#edit-title"),
+  editTags: document.querySelector("#edit-tags"),
+  editOcrDetail: document.querySelector("#edit-ocr-detail"),
   editVisibility: document.querySelector("#edit-visibility"),
   saveEdit: document.querySelector("#save-edit"),
   deleteDialog: document.querySelector("#delete-dialog"),
@@ -66,6 +73,7 @@ const iconPaths = {
   link: '<path d="m9 15 6-6m-7.5 2.5-2 2a3.5 3.5 0 0 0 5 5l2-2m4-5 2-2a3.5 3.5 0 0 0-5-5l-2 2"/>',
   lock: '<rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/>',
+  scan: '<path d="M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M8 21H4a1 1 0 0 1-1-1v-4m13 5h4a1 1 0 0 0 1-1v-4M7 9h10M7 12h8M7 15h10"/>',
 };
 
 const visibilityDetails = {
@@ -107,6 +115,12 @@ async function request(url, options = {}) {
 
 async function bootstrap() {
   try {
+    try {
+      state.autoOcr = window.localStorage.getItem("upload-sardistic-auto-ocr") !== "off";
+    } catch {
+      state.autoOcr = true;
+    }
+    elements.autoOcr.checked = state.autoOcr;
     const session = await request("/api/session");
     state.maxUploadBytes = session.maxUploadBytes;
     if (session.authenticated) {
@@ -118,6 +132,15 @@ async function bootstrap() {
     elements.boot.textContent = "upload.sardistic.com could not connect. Refresh to try again.";
   }
 }
+
+elements.autoOcr.addEventListener("change", () => {
+  state.autoOcr = elements.autoOcr.checked;
+  try {
+    window.localStorage.setItem("upload-sardistic-auto-ocr", state.autoOcr ? "on" : "off");
+  } catch {
+    // The preference still applies for this page when storage is unavailable.
+  }
+});
 
 function showLogin() {
   elements.boot.classList.add("hidden");
@@ -282,7 +305,7 @@ async function uploadFiles(files) {
       }
       const body = await request("/api/uploads", { method: "POST", headers, body: file });
       state.uploads.unshift(body.upload);
-      uploaded.push(body.upload);
+      uploaded.push({ upload: body.upload, file });
     } catch (error) {
       toast(`${file.name || "Image"}: ${error.message}`, true);
     }
@@ -295,9 +318,12 @@ async function uploadFiles(files) {
   render();
 
   if (uploaded.length) {
-    showLatest(uploaded.at(-1));
+    showLatest(uploaded.at(-1).upload);
     toast(`${uploaded.length} ${uploaded.length === 1 ? "image" : "images"} uploaded`);
     elements.latestResult.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (state.autoOcr) {
+      for (const item of uploaded) scanUpload(item.upload.id, item.file);
+    }
   }
 }
 
@@ -428,7 +454,7 @@ function makePublicCard(upload) {
 function renderGallery() {
   const uploads = state.uploads.filter((upload) => {
     const visibilityMatch = state.filter === "all" || upload.visibility === state.filter;
-    const searchMatch = !state.search || `${upload.title} ${upload.originalName} ${upload.publicPath}`.toLowerCase().includes(state.search);
+    const searchMatch = !state.search || `${upload.title} ${upload.originalName} ${upload.publicPath} ${(upload.tags ?? []).join(" ")} ${upload.ocrText ?? ""}`.toLowerCase().includes(state.search);
     return visibilityMatch && searchMatch;
   });
 
@@ -490,6 +516,30 @@ function makeCard(upload) {
   edit.addEventListener("click", () => openEdit(upload.id));
   titleRow.append(titleBlock, edit);
 
+  const tags = document.createElement("div");
+  tags.className = "card-tags";
+  const job = state.ocrJobs.get(upload.id);
+  if (job) {
+    const status = document.createElement("span");
+    status.className = `ocr-state ocr-state--${job.state}`;
+    status.textContent = job.label;
+    tags.append(status);
+  } else if ((upload.tags ?? []).length) {
+    for (const tag of upload.tags.slice(0, 5)) {
+      const item = document.createElement("span");
+      item.className = "card-tag";
+      item.textContent = tag;
+      tags.append(item);
+    }
+  } else {
+    const status = document.createElement("span");
+    status.className = `ocr-state${upload.ocrUpdatedAt ? " ocr-state--complete" : ""}`;
+    status.textContent = upload.ocrUpdatedAt
+      ? (upload.ocrText ? `Text indexed · ${upload.ocrConfidence ?? 0}%` : "Scanned · no text")
+      : "Not scanned";
+    tags.append(status);
+  }
+
   const urlLine = document.createElement("div");
   urlLine.className = "card-url";
   urlLine.append(svgIcon(visibility.icon));
@@ -513,14 +563,20 @@ function makeCard(upload) {
   download.download = upload.publicPath.slice(1);
   download.append(svgIcon("download"), document.createTextNode("Download"));
 
+  const scanLabel = job?.state === "running" ? "Working" : (job?.state === "error" ? "Retry" : (upload.ocrUpdatedAt ? "Rescan" : "Scan"));
+  const scan = makeAction("scan", scanLabel);
+  scan.disabled = Boolean(job && job.state === "running");
+  scan.title = "Extract searchable text and tags locally in this browser";
+  scan.addEventListener("click", () => scanUpload(upload.id));
+
   const remove = makeAction("trash", "");
   remove.classList.add("card-action--danger");
   remove.title = "Delete image";
   remove.setAttribute("aria-label", `Delete ${upload.title}`);
   remove.addEventListener("click", () => openDelete(upload.id));
-  actions.append(copy, download, remove);
+  actions.append(copy, download, scan, remove);
 
-  body.append(titleRow, urlLine, actions);
+  body.append(titleRow, tags, urlLine, actions);
   card.append(imageLink, body);
   return card;
 }
@@ -539,6 +595,14 @@ function openEdit(id) {
   if (!upload) return;
   state.editingId = id;
   elements.editTitle.value = upload.title;
+  elements.editTags.value = (upload.tags ?? []).join(", ");
+  if (upload.ocrUpdatedAt) {
+    const confidence = upload.ocrConfidence === null ? "unknown confidence" : `${upload.ocrConfidence}% confidence`;
+    const excerpt = upload.ocrText ? `\n${upload.ocrText.slice(0, 500)}` : "\nNo readable text found.";
+    elements.editOcrDetail.textContent = `Local OCR · ${confidence}${excerpt}`;
+  } else {
+    elements.editOcrDetail.textContent = "No text scan saved. Use Scan on the image card to index it.";
+  }
   setSelectedVisibility("edit-visibility", upload.visibility);
   elements.editDialog.showModal();
   elements.editTitle.select();
@@ -558,7 +622,11 @@ elements.editForm.addEventListener("submit", async (event) => {
     const body = await request(`/api/uploads/${upload.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: elements.editTitle.value, visibility: selectedVisibility("edit-visibility") }),
+      body: JSON.stringify({
+        title: elements.editTitle.value,
+        tags: elements.editTags.value.split(",").map((tag) => tag.trim()).filter(Boolean),
+        visibility: selectedVisibility("edit-visibility"),
+      }),
     });
     state.uploads = state.uploads.map((item) => item.id === body.upload.id ? body.upload : item);
     if (state.latestUpload?.id === body.upload.id) showLatest(body.upload);
@@ -572,6 +640,76 @@ elements.editForm.addEventListener("submit", async (event) => {
     elements.saveEdit.disabled = false;
   }
 });
+
+async function scanUpload(id, source = null) {
+  const original = state.uploads.find((item) => item.id === id);
+  if (!original || state.ocrJobs.get(id)?.state === "running") return;
+  state.ocrJobs.delete(id);
+
+  state.ocrJobs.set(id, { state: "running", label: "OCR queued" });
+  renderGallery();
+  let lastRenderedAt = 0;
+  let lastPercent = -1;
+
+  try {
+    let imageSource = source;
+    if (!imageSource) {
+      const response = await fetch(original.previewUrl);
+      if (!response.ok) throw new Error("Could not read the image");
+      imageSource = await response.blob();
+    }
+    const result = await recognizeLocally(imageSource, (progress) => {
+      const percent = Number.isFinite(progress.progress) ? Math.round(progress.progress * 100) : 0;
+      const now = Date.now();
+      if (now - lastRenderedAt < 250 && percent === lastPercent) return;
+      lastRenderedAt = now;
+      lastPercent = percent;
+      const phase = ocrPhase(progress.status);
+      state.ocrJobs.set(id, { state: "running", label: percent ? `${phase} · ${percent}%` : phase });
+      renderGallery();
+    });
+    const latest = state.uploads.find((item) => item.id === id) ?? original;
+    const body = await request(`/api/uploads/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ocr: {
+          ...result,
+          applyTitle: hasGenericImageName(latest.title) || hasGenericImageName(latest.originalName),
+        },
+      }),
+    });
+    state.uploads = state.uploads.map((item) => item.id === id ? body.upload : item);
+    if (state.latestUpload?.id === id) showLatest(body.upload);
+    state.ocrJobs.delete(id);
+    render();
+    if (result.text) {
+      const details = result.tags.length ? ` and ${result.tags.length} tags` : "";
+      toast(`Local OCR indexed text${details}`);
+    } else {
+      toast("Local OCR found no readable text");
+    }
+  } catch (error) {
+    state.ocrJobs.set(id, { state: "error", label: "OCR failed" });
+    renderGallery();
+    toast(`OCR: ${error.message}`, true);
+  }
+}
+
+function ocrPhase(status) {
+  const phases = {
+    "preparing image": "Preparing",
+    "loading tesseract core": "Loading OCR",
+    "loaded tesseract core": "Loading OCR",
+    "initializing tesseract": "Starting OCR",
+    "initialized tesseract": "Starting OCR",
+    "loading language traineddata": "Loading English",
+    "loaded language traineddata": "Loading English",
+    "initializing api": "Starting OCR",
+    "recognizing text": "Reading text",
+  };
+  return phases[String(status ?? "").toLowerCase()] ?? "Local OCR";
+}
 
 function openDelete(id) {
   const upload = state.uploads.find((item) => item.id === id);

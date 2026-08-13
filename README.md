@@ -6,7 +6,7 @@ Sardrop is a private, self-hosted image uploader for `upload.sardistic.com`. Sig
 https://upload.sardistic.com/silver-ember-k7mx2q.png
 ```
 
-The owner dashboard provides a searchable upload library with direct-link copying, downloads, titles, persistent view counts, three visibility levels, and permanent deletion:
+The owner dashboard provides a searchable upload library with direct-link copying, downloads, titles, local OCR tags/text, persistent view counts, three visibility levels, and permanent deletion:
 
 - **Public** — accessible by direct URL and displayed on the anonymous splash-page gallery.
 - **Link only** — accessible to anyone with the randomized URL but never included in the public gallery. This is the default for new uploads.
@@ -14,11 +14,14 @@ The owner dashboard provides a searchable upload library with direct-link copyin
 
 Direct image GET requests increment the view count. Owner and public-gallery thumbnails use dedicated preview routes and do not inflate it.
 
+Local OCR is enabled by default for new uploads. Tesseract.js and its English model are served by this app, run in the owner's browser, and process one downscaled image at a time. Extracted text and tags are saved as owner-only metadata and are never included in the anonymous public API. Generic screenshot filenames can be replaced with a high-confidence first line; manually edited titles are never overwritten by later scans.
+
 ## Run locally
 
-Sardrop has no runtime package dependencies and requires Node.js 20 or newer.
+Sardrop requires Node.js 20 or newer. Install the pinned browser OCR assets before starting it:
 
 ```powershell
+npm ci
 $env:APP_PASSWORD = "a-long-owner-password"
 $env:SESSION_SECRET = "at-least-32-random-characters-go-here"
 npm start
@@ -38,7 +41,7 @@ Open `http://localhost:3000`. Upload files and metadata are written beneath `./d
 | `MAX_UPLOAD_MB` | no | `25` | Per-image limit, from 1–100 MB |
 | `SESSION_DAYS` | no | `30` | Owner session lifetime |
 
-Never commit the real `.env`. Back up the complete data directory; image files and `metadata.json` are both required for a full restore. Version 1 metadata is migrated automatically on startup: legacy public images become Public, and legacy private images remain Private.
+Never commit the real `.env`. Back up the complete data directory; image files and `metadata.json` are both required for a full restore. Version 1 and 2 metadata is migrated automatically to version 3: legacy visibility and view data is preserved while owner-only OCR fields are initialized safely.
 
 ## Docker
 

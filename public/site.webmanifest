@@ -1,0 +1,12 @@
+{
+  "name": "Sardrop",
+  "short_name": "Sardrop",
+  "description": "Private paste-to-image URLs on sardistic.com",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0e0d",
+  "theme_color": "#0b0e0d",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

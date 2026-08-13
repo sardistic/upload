@@ -1,0 +1,33 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATA_DIR: /data
+      BASE_URL: https://upload.sardistic.com
+      APP_PASSWORD: ${APP_PASSWORD:?APP_PASSWORD is required}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+      SESSION_DAYS: ${SESSION_DAYS:-30}
+    volumes:
+      - ./data:/data
+    networks:
+      edge:
+        aliases:
+          - sard-upload
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  edge:
+    external: true

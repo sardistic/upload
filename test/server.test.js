@@ -49,7 +49,8 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   const home = await fetch(app.origin);
   assert.equal(home.status, 200);
   assert.match(home.headers.get("content-security-policy"), /default-src 'self'/);
-  assert.match(await home.text(), /Paste it/);
+  assert.match(home.headers.get("content-security-policy"), /img-src 'self' https:\/\/veles\.cards/);
+  assert.match(await home.text(), /upload\.sardistic\.com/);
 
   const anonymousList = await fetch(`${app.origin}/api/uploads`);
   assert.equal(anonymousList.status, 401);

@@ -13,6 +13,9 @@ const state = {
 const elements = {
   boot: document.querySelector("#boot-screen"),
   loginView: document.querySelector("#login-view"),
+  ownerDialog: document.querySelector("#owner-dialog"),
+  ownerAccess: document.querySelector("#owner-access-button"),
+  ownerDialogClose: document.querySelector("#owner-dialog-close"),
   loginForm: document.querySelector("#login-form"),
   loginError: document.querySelector("#login-error"),
   password: document.querySelector("#password"),
@@ -71,6 +74,12 @@ const visibilityDetails = {
   private: { label: "Private", icon: "lock", description: "Only inside your vault" },
 };
 
+for (const mark of document.querySelectorAll(".liquid-mark")) {
+  const showFallback = () => mark.parentElement.classList.add("brand-glyph--failed");
+  mark.addEventListener("error", showFallback, { once: true });
+  if (mark.complete && !mark.naturalWidth) showFallback();
+}
+
 function svgIcon(name) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("aria-hidden", "true");
@@ -106,7 +115,7 @@ async function bootstrap() {
       showLogin();
     }
   } catch {
-    elements.boot.textContent = "Sardrop could not connect. Refresh to try again.";
+    elements.boot.textContent = "upload.sardistic.com could not connect. Refresh to try again.";
   }
 }
 
@@ -114,16 +123,25 @@ function showLogin() {
   elements.boot.classList.add("hidden");
   elements.app.classList.add("hidden");
   elements.loginView.classList.remove("hidden");
+  if (elements.ownerDialog.open) elements.ownerDialog.close();
   loadPublicUploads();
-  window.setTimeout(() => elements.password.focus(), 50);
 }
 
 async function showApp() {
   elements.boot.classList.add("hidden");
   elements.loginView.classList.add("hidden");
+  if (elements.ownerDialog.open) elements.ownerDialog.close();
   elements.app.classList.remove("hidden");
   await loadUploads();
 }
+
+elements.ownerAccess.addEventListener("click", () => {
+  elements.loginError.classList.add("hidden");
+  elements.ownerDialog.showModal();
+  window.setTimeout(() => elements.password.focus(), 50);
+});
+
+elements.ownerDialogClose.addEventListener("click", () => elements.ownerDialog.close());
 
 async function loadUploads() {
   try {

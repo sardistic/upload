@@ -3,69 +3,68 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#0b0e0d">
+    <meta name="theme-color" content="#f2eee6">
     <meta name="robots" content="noindex, nofollow, noarchive">
-    <title>Sardrop — paste, share, done.</title>
+    <title>upload.sardistic.com — paste, share, done.</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="manifest" href="/site.webmanifest">
-    <link rel="stylesheet" href="/styles.css?v=2">
+    <link rel="stylesheet" href="/styles.css?v=3">
   </head>
   <body>
     <div class="boot-screen" id="boot-screen" aria-live="polite">
-      <div class="brand-mark brand-mark--large" aria-hidden="true">S</div>
-      <span>Opening your vault…</span>
+      <span class="brand-glyph brand-glyph--large"><img class="liquid-mark" src="https://veles.cards/liquid.gif" alt="" width="58" height="58"><b aria-hidden="true">S</b></span>
+      <span>Connecting to upload.sardistic.com…</span>
     </div>
 
     <main class="public-view hidden" id="login-view">
       <header class="public-header">
-        <a class="brand" href="/" aria-label="Sardrop home">
-          <span class="brand-mark">S</span>
-          <span class="brand-word">sardrop</span>
+        <a class="brand" href="/" aria-label="upload.sardistic.com home">
+          <span class="brand-host"><strong>upload</strong><i>.</i><span class="brand-glyph"><img class="liquid-mark" src="https://veles.cards/liquid.gif" alt="" width="36" height="36"><b aria-hidden="true">S</b></span><span>ardistic</span><i>.com</i></span>
         </a>
-        <span class="domain-pill"><span class="status-dot"></span> upload.sardistic.com</span>
+        <div class="public-utilities">
+          <a href="#public-showcase">Public shelf</a>
+          <button class="owner-key" id="owner-access-button" type="button" aria-label="Owner access" title="Owner access">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8m-3 3 2 2m-5 1 2 2"/></svg>
+          </button>
+        </div>
       </header>
 
       <div class="public-content">
         <section class="public-hero" aria-labelledby="public-title">
           <div class="public-hero__copy">
-            <p class="eyebrow"><span class="eyebrow-line"></span> A small corner of the internet</p>
-            <h1 id="public-title">Shared things,<br><span>kept simple.</span></h1>
-            <p>Public images from Sardrop. No feeds to game, no ads to dodge—just the things worth sharing.</p>
+            <p class="eyebrow"><span>01</span> Independent image hosting</p>
+            <h1 id="public-title">A home for<br><em>the things</em><br>you share.</h1>
+            <p>Paste an image. Keep it public, share it quietly by link, or lock it away. Your files, your domain, your call.</p>
             <a class="public-jump" href="#public-showcase">
-              Browse public uploads
-              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+              See what’s public
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
             </a>
           </div>
 
-          <section class="login-card" aria-labelledby="login-title">
-            <div class="login-copy">
-              <p class="eyebrow">Owner access</p>
-              <h2 id="login-title">Open your vault.</h2>
-              <p>Sign in to paste, manage, and view private images.</p>
+          <div class="hero-object" aria-hidden="true">
+            <div class="url-ticket">
+              <span>UPLOAD / 0042</span>
+              <strong>velvet-panda-e3wq39.png</strong>
+              <small>upload.sardistic.com</small>
             </div>
-            <form class="login-form" id="login-form">
-              <label for="password">Owner password</label>
-              <div class="password-field">
-                <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
-                <button class="icon-button show-password" id="show-password" type="button" aria-label="Show password" title="Show password">
-                  <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M2.2 12s3.3-6 9.8-6 9.8 6 9.8 6-3.3 6-9.8 6-9.8-6-9.8-6Z"/><circle cx="12" cy="12" r="2.7"/></svg>
-                </button>
-              </div>
-              <p class="form-error hidden" id="login-error" role="alert"></p>
-              <button class="primary-button primary-button--full" type="submit">
-                <span>Unlock Sardrop</span>
-                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
-              </button>
-            </form>
-            <p class="login-footnote"><span class="status-dot"></span> Private owner session</p>
-          </section>
+            <div class="privacy-stack">
+              <span><b>Public</b><small>On the shelf</small></span>
+              <span><b>Link only</b><small>For whoever has it</small></span>
+              <span><b>Private</b><small>For your eyes</small></span>
+            </div>
+            <div class="paste-stamp">
+              <kbd>Ctrl</kbd><i>+</i><kbd>V</kbd>
+              <span>clipboard → URL</span>
+            </div>
+          </div>
         </section>
 
         <section class="public-showcase" id="public-showcase" aria-labelledby="public-gallery-title">
           <div class="public-showcase__heading">
             <div>
-              <p class="eyebrow">Public shelf</p>
-              <h2 id="public-gallery-title">Shared uploads</h2>
+              <p class="eyebrow"><span>02</span> Open collection</p>
+              <h2 id="public-gallery-title">The public shelf</h2>
+              <p>Only images deliberately marked Public land here.</p>
             </div>
             <span id="public-count">0 images</span>
           </div>
@@ -74,26 +73,55 @@
             <span class="empty-state__icon">
               <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9" r="1.5"/><path d="m5 17 4.5-4.5 3.2 3.2 2.1-2.1L19 17"/></svg>
             </span>
-            <h3>The public shelf is quiet.</h3>
-            <p>Uploads marked Public will appear here. Unlisted and Private images never do.</p>
+            <h3>Nothing on the shelf yet.</h3>
+            <p>Link-only and Private uploads stay out of sight. Public images will appear here.</p>
           </div>
         </section>
       </div>
 
       <footer>
-        <span><span class="status-dot"></span> Self-hosted and online</span>
-        <span>Built for sardistic.com</span>
+        <a class="footer-brand" href="https://sardistic.com">
+          <span class="brand-glyph"><img class="liquid-mark" src="https://veles.cards/liquid.gif" alt="" width="32" height="32"><b aria-hidden="true">S</b></span>
+          <span>ardistic.com</span>
+        </a>
+        <span>Personal image infrastructure · online</span>
       </footer>
+
+      <dialog class="owner-dialog" id="owner-dialog">
+        <form class="login-form" id="login-form">
+          <div class="owner-dialog__head">
+            <span class="owner-dialog__number">OWNER / 01</span>
+            <button class="icon-button" id="owner-dialog-close" type="button" aria-label="Close owner login">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+            </button>
+          </div>
+          <div class="login-copy">
+            <h2 id="login-title">Open the vault.</h2>
+            <p>Owner access to upload, organize, and manage private images.</p>
+          </div>
+          <label for="password">Password</label>
+          <div class="password-field">
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+            <button class="icon-button show-password" id="show-password" type="button" aria-label="Show password" title="Show password">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M2.2 12s3.3-6 9.8-6 9.8 6 9.8 6-3.3 6-9.8 6-9.8-6-9.8-6Z"/><circle cx="12" cy="12" r="2.7"/></svg>
+            </button>
+          </div>
+          <p class="form-error hidden" id="login-error" role="alert"></p>
+          <button class="primary-button primary-button--full" type="submit">
+            <span>Continue</span>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+          </button>
+        </form>
+      </dialog>
     </main>
 
     <div class="app-shell hidden" id="app-shell">
       <header class="site-header">
-        <a class="brand" href="/" aria-label="Sardrop home">
-          <span class="brand-mark">S</span>
-          <span class="brand-word">sardrop</span>
+        <a class="brand" href="/" aria-label="upload.sardistic.com home">
+          <span class="brand-host"><strong>upload</strong><i>.</i><span class="brand-glyph"><img class="liquid-mark" src="https://veles.cards/liquid.gif" alt="" width="36" height="36"><b aria-hidden="true">S</b></span><span>ardistic</span><i>.com</i></span>
         </a>
         <div class="header-actions">
-          <span class="domain-pill"><span class="status-dot"></span> upload.sardistic.com</span>
+          <span class="owner-mode">Owner console</span>
           <button class="secondary-button secondary-button--compact" id="logout-button" type="button">
             <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M10 17l5-5-5-5M15 12H3M15 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/></svg>
             <span>Lock vault</span>
@@ -104,9 +132,9 @@
       <main class="content">
         <section class="hero" aria-labelledby="hero-title">
           <div class="hero-copy">
-            <p class="eyebrow"><span class="eyebrow-line"></span> Your private image host</p>
-            <h1 id="hero-title">Paste it.<br><span>Get the link.</span></h1>
-            <p>Copy any image, press <kbd>Ctrl</kbd> + <kbd>V</kbd>, and Sardrop gives it a clean, shareable URL.</p>
+            <p class="eyebrow"><span>01</span> New upload</p>
+            <h1 id="hero-title">Clipboard in.<br><em>URL out.</em></h1>
+            <p>Copy any image, press <kbd>Ctrl</kbd> + <kbd>V</kbd>, and choose exactly who gets to see it.</p>
           </div>
 
           <div class="drop-card" id="drop-card">
@@ -165,8 +193,8 @@
         <section class="library" aria-labelledby="library-title">
           <div class="library-heading">
             <div>
-              <p class="eyebrow">The vault</p>
-              <h2 id="library-title">Your uploads</h2>
+              <p class="eyebrow"><span>02</span> Your archive</p>
+              <h2 id="library-title">Every upload</h2>
             </div>
             <div class="stats" aria-label="Upload statistics">
               <div><strong id="stat-total">0</strong><span>images</span></div>
@@ -201,8 +229,11 @@
       </main>
 
       <footer>
-        <span><span class="status-dot"></span> Private infrastructure, online</span>
-        <span>Built for sardistic.com</span>
+        <a class="footer-brand" href="https://sardistic.com">
+          <span class="brand-glyph"><img class="liquid-mark" src="https://veles.cards/liquid.gif" alt="" width="32" height="32"><b aria-hidden="true">S</b></span>
+          <span>ardistic.com</span>
+        </a>
+        <span>Personal image infrastructure · online</span>
       </footer>
     </div>
 
@@ -256,6 +287,6 @@
     </dialog>
 
     <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
-    <script src="/app.js?v=2" type="module"></script>
+    <script src="/app.js?v=3" type="module"></script>
   </body>
 </html>

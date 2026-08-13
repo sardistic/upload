@@ -346,7 +346,7 @@ export async function createSardropServer(overrides = {}) {
         response.writeHead(200, baseHeaders({
           "Content-Type": contentType,
           "Cache-Control": filename === "index.html" ? "no-cache" : "public, max-age=3600",
-          "Content-Security-Policy": "default-src 'self'; img-src 'self' blob: data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+          "Content-Security-Policy": "default-src 'self'; img-src 'self' https://veles.cards blob: data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
         }));
         return response.end(body);
       }

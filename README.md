@@ -6,7 +6,13 @@ Sardrop is a private, self-hosted image uploader for `upload.sardistic.com`. Sig
 https://upload.sardistic.com/silver-ember-k7mx2q.png
 ```
 
-The owner dashboard provides a searchable upload library with direct-link copying, downloads, titles, public/private switching, and permanent deletion. A private image returns `404` at its direct URL and is only available through the authenticated dashboard.
+The owner dashboard provides a searchable upload library with direct-link copying, downloads, titles, persistent view counts, three visibility levels, and permanent deletion:
+
+- **Public** — accessible by direct URL and displayed on the anonymous splash-page gallery.
+- **Link only** — accessible to anyone with the randomized URL but never included in the public gallery. This is the default for new uploads.
+- **Private** — available only through the authenticated dashboard; its direct URL returns `404`.
+
+Direct image GET requests increment the view count. Owner and public-gallery thumbnails use dedicated preview routes and do not inflate it.
 
 ## Run locally
 
@@ -32,7 +38,7 @@ Open `http://localhost:3000`. Upload files and metadata are written beneath `./d
 | `MAX_UPLOAD_MB` | no | `25` | Per-image limit, from 1–100 MB |
 | `SESSION_DAYS` | no | `30` | Owner session lifetime |
 
-Never commit the real `.env`. Back up the complete data directory; image files and `metadata.json` are both required for a full restore.
+Never commit the real `.env`. Back up the complete data directory; image files and `metadata.json` are both required for a full restore. Version 1 metadata is migrated automatically on startup: legacy public images become Public, and legacy private images remain Private.
 
 ## Docker
 

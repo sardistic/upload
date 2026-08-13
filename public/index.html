@@ -8,7 +8,7 @@
     <title>Sardrop — paste, share, done.</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="manifest" href="/site.webmanifest">
-    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/styles.css?v=2">
   </head>
   <body>
     <div class="boot-screen" id="boot-screen" aria-live="polite">
@@ -16,33 +16,74 @@
       <span>Opening your vault…</span>
     </div>
 
-    <main class="login-view hidden" id="login-view">
-      <section class="login-card" aria-labelledby="login-title">
-        <a class="brand brand--centered" href="/" aria-label="Sardrop home">
+    <main class="public-view hidden" id="login-view">
+      <header class="public-header">
+        <a class="brand" href="/" aria-label="Sardrop home">
           <span class="brand-mark">S</span>
           <span class="brand-word">sardrop</span>
         </a>
-        <div class="login-copy">
-          <p class="eyebrow">Private image vault</p>
-          <h1 id="login-title">Your screenshots.<br>Your URLs.</h1>
-          <p>Enter the owner password to upload, manage, or view private images.</p>
-        </div>
-        <form class="login-form" id="login-form">
-          <label for="password">Owner password</label>
-          <div class="password-field">
-            <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
-            <button class="icon-button show-password" id="show-password" type="button" aria-label="Show password" title="Show password">
-              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M2.2 12s3.3-6 9.8-6 9.8 6 9.8 6-3.3 6-9.8 6-9.8-6-9.8-6Z"/><circle cx="12" cy="12" r="2.7"/></svg>
-            </button>
+        <span class="domain-pill"><span class="status-dot"></span> upload.sardistic.com</span>
+      </header>
+
+      <div class="public-content">
+        <section class="public-hero" aria-labelledby="public-title">
+          <div class="public-hero__copy">
+            <p class="eyebrow"><span class="eyebrow-line"></span> A small corner of the internet</p>
+            <h1 id="public-title">Shared things,<br><span>kept simple.</span></h1>
+            <p>Public images from Sardrop. No feeds to game, no ads to dodge—just the things worth sharing.</p>
+            <a class="public-jump" href="#public-showcase">
+              Browse public uploads
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+            </a>
           </div>
-          <p class="form-error hidden" id="login-error" role="alert"></p>
-          <button class="primary-button primary-button--full" type="submit">
-            <span>Unlock Sardrop</span>
-            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
-          </button>
-        </form>
-        <p class="login-footnote"><span class="status-dot"></span> Self-hosted on sardistic.com</p>
-      </section>
+
+          <section class="login-card" aria-labelledby="login-title">
+            <div class="login-copy">
+              <p class="eyebrow">Owner access</p>
+              <h2 id="login-title">Open your vault.</h2>
+              <p>Sign in to paste, manage, and view private images.</p>
+            </div>
+            <form class="login-form" id="login-form">
+              <label for="password">Owner password</label>
+              <div class="password-field">
+                <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+                <button class="icon-button show-password" id="show-password" type="button" aria-label="Show password" title="Show password">
+                  <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M2.2 12s3.3-6 9.8-6 9.8 6 9.8 6-3.3 6-9.8 6-9.8-6-9.8-6Z"/><circle cx="12" cy="12" r="2.7"/></svg>
+                </button>
+              </div>
+              <p class="form-error hidden" id="login-error" role="alert"></p>
+              <button class="primary-button primary-button--full" type="submit">
+                <span>Unlock Sardrop</span>
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+            </form>
+            <p class="login-footnote"><span class="status-dot"></span> Private owner session</p>
+          </section>
+        </section>
+
+        <section class="public-showcase" id="public-showcase" aria-labelledby="public-gallery-title">
+          <div class="public-showcase__heading">
+            <div>
+              <p class="eyebrow">Public shelf</p>
+              <h2 id="public-gallery-title">Shared uploads</h2>
+            </div>
+            <span id="public-count">0 images</span>
+          </div>
+          <div class="public-gallery" id="public-gallery"></div>
+          <div class="public-empty hidden" id="public-empty">
+            <span class="empty-state__icon">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9" r="1.5"/><path d="m5 17 4.5-4.5 3.2 3.2 2.1-2.1L19 17"/></svg>
+            </span>
+            <h3>The public shelf is quiet.</h3>
+            <p>Uploads marked Public will appear here. Unlisted and Private images never do.</p>
+          </div>
+        </section>
+      </div>
+
+      <footer>
+        <span><span class="status-dot"></span> Self-hosted and online</span>
+        <span>Built for sardistic.com</span>
+      </footer>
     </main>
 
     <div class="app-shell hidden" id="app-shell">
@@ -82,16 +123,21 @@
               </button>
               <span class="shortcut"><kbd>Ctrl</kbd><b>+</b><kbd>V</kbd></span>
             </div>
-            <label class="privacy-choice" for="private-default">
-              <span>
-                <strong>Upload privately</strong>
-                <small>The direct URL will return a 404</small>
-              </span>
-              <span class="switch">
-                <input id="private-default" type="checkbox">
-                <span aria-hidden="true"></span>
-              </span>
-            </label>
+            <fieldset class="visibility-picker visibility-picker--dock" id="upload-visibility">
+              <legend class="visually-hidden">Upload visibility</legend>
+              <label>
+                <input type="radio" name="upload-visibility" value="public">
+                <span><strong>Public</strong><small>Shown on the public shelf</small></span>
+              </label>
+              <label>
+                <input type="radio" name="upload-visibility" value="unlisted" checked>
+                <span><strong>Link only</strong><small>Anyone with the URL</small></span>
+              </label>
+              <label>
+                <input type="radio" name="upload-visibility" value="private">
+                <span><strong>Private</strong><small>Only inside your vault</small></span>
+              </label>
+            </fieldset>
             <div class="upload-queue hidden" id="upload-queue" aria-live="polite"></div>
           </div>
         </section>
@@ -124,6 +170,7 @@
             </div>
             <div class="stats" aria-label="Upload statistics">
               <div><strong id="stat-total">0</strong><span>images</span></div>
+              <div><strong id="stat-views">0</strong><span>views</span></div>
               <div><strong id="stat-storage">0 B</strong><span>stored</span></div>
               <div><strong id="stat-private">0</strong><span>private</span></div>
             </div>
@@ -137,6 +184,7 @@
             <div class="filter-tabs" id="filter-tabs" aria-label="Filter uploads">
               <button class="active" type="button" data-filter="all">All</button>
               <button type="button" data-filter="public">Public</button>
+              <button type="button" data-filter="unlisted">Link only</button>
               <button type="button" data-filter="private">Private</button>
             </div>
           </div>
@@ -171,16 +219,21 @@
         </div>
         <label class="field-label" for="edit-title">Title</label>
         <input class="text-input" id="edit-title" maxlength="120" required>
-        <label class="modal-privacy" for="edit-private">
-          <span>
-            <strong>Private image</strong>
-            <small>Only visible while signed in to Sardrop</small>
-          </span>
-          <span class="switch">
-            <input id="edit-private" type="checkbox">
-            <span aria-hidden="true"></span>
-          </span>
-        </label>
+        <fieldset class="visibility-picker visibility-picker--modal" id="edit-visibility">
+          <legend>Who can see it?</legend>
+          <label>
+            <input type="radio" name="edit-visibility" value="public">
+            <span><strong>Public</strong><small>Direct link + public shelf</small></span>
+          </label>
+          <label>
+            <input type="radio" name="edit-visibility" value="unlisted">
+            <span><strong>Link only</strong><small>Anyone with the URL; never listed</small></span>
+          </label>
+          <label>
+            <input type="radio" name="edit-visibility" value="private">
+            <span><strong>Private</strong><small>Only visible while signed in</small></span>
+          </label>
+        </fieldset>
         <div class="modal-actions">
           <button class="secondary-button" value="cancel" formnovalidate>Cancel</button>
           <button class="primary-button" id="save-edit" value="default">Save changes</button>
@@ -203,6 +256,6 @@
     </dialog>
 
     <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
-    <script src="/app.js" type="module"></script>
+    <script src="/app.js?v=2" type="module"></script>
   </body>
 </html>

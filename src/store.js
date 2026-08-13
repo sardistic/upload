@@ -6,7 +6,7 @@ export class UploadStore {
     this.dataDir = dataDir;
     this.imagesDir = path.join(dataDir, "images");
     this.metadataPath = path.join(dataDir, "metadata.json");
-    this.state = { version: 1, uploads: [] };
+    this.state = { version: 2, uploads: [] };
     this.mutationQueue = Promise.resolve();
   }
 
@@ -15,10 +15,29 @@ export class UploadStore {
 
     try {
       const stored = JSON.parse(await readFile(this.metadataPath, "utf8"));
-      if (stored?.version !== 1 || !Array.isArray(stored.uploads)) {
+      if (![1, 2].includes(stored?.version) || !Array.isArray(stored.uploads)) {
         throw new Error("Unsupported metadata format");
       }
-      this.state = stored;
+      const needsMigration = stored.version !== 2 || stored.uploads.some((upload) => (
+        !["public", "unlisted", "private"].includes(upload.visibility)
+        || !Number.isInteger(upload.views)
+        || upload.views < 0
+        || Object.hasOwn(upload, "isPrivate")
+      ));
+      this.state = {
+        version: 2,
+        uploads: stored.uploads.map((upload) => {
+          const { isPrivate, ...rest } = upload;
+          return {
+            ...rest,
+            visibility: ["public", "unlisted", "private"].includes(upload.visibility)
+              ? upload.visibility
+              : (isPrivate ? "private" : "public"),
+            views: Number.isInteger(upload.views) && upload.views >= 0 ? upload.views : 0,
+          };
+        }),
+      };
+      if (needsMigration) await this.persist();
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
       await this.persist();
@@ -72,6 +91,26 @@ export class UploadStore {
         await this.persist();
       } catch (error) {
         Object.assign(upload, previous);
+        throw error;
+      }
+      return upload;
+    });
+  }
+
+  async incrementViews(id) {
+    return this.mutate(async () => {
+      const upload = this.findById(id);
+      if (!upload) return null;
+      const previousViews = upload.views;
+      const previousLastViewedAt = upload.lastViewedAt;
+      upload.views += 1;
+      upload.lastViewedAt = new Date().toISOString();
+      try {
+        await this.persist();
+      } catch (error) {
+        upload.views = previousViews;
+        if (previousLastViewedAt) upload.lastViewedAt = previousLastViewedAt;
+        else delete upload.lastViewedAt;
         throw error;
       }
       return upload;

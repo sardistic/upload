@@ -1,5 +1,6 @@
 const state = {
   uploads: [],
+  publicUploads: [],
   filter: "all",
   search: "",
   maxUploadBytes: 25 * 1024 * 1024,
@@ -21,7 +22,7 @@ const elements = {
   dropCard: document.querySelector("#drop-card"),
   choose: document.querySelector("#choose-button"),
   fileInput: document.querySelector("#file-input"),
-  privateDefault: document.querySelector("#private-default"),
+  uploadVisibility: document.querySelector("#upload-visibility"),
   uploadQueue: document.querySelector("#upload-queue"),
   latestResult: document.querySelector("#latest-result"),
   latestTitle: document.querySelector("#latest-title"),
@@ -29,6 +30,7 @@ const elements = {
   latestCopy: document.querySelector("#latest-copy"),
   resultClose: document.querySelector("#result-close"),
   statTotal: document.querySelector("#stat-total"),
+  statViews: document.querySelector("#stat-views"),
   statStorage: document.querySelector("#stat-storage"),
   statPrivate: document.querySelector("#stat-private"),
   search: document.querySelector("#search-input"),
@@ -40,12 +42,15 @@ const elements = {
   editDialog: document.querySelector("#edit-dialog"),
   editForm: document.querySelector("#edit-form"),
   editTitle: document.querySelector("#edit-title"),
-  editPrivate: document.querySelector("#edit-private"),
+  editVisibility: document.querySelector("#edit-visibility"),
   saveEdit: document.querySelector("#save-edit"),
   deleteDialog: document.querySelector("#delete-dialog"),
   deleteForm: document.querySelector("#delete-form"),
   deleteTitle: document.querySelector("#delete-title"),
   confirmDelete: document.querySelector("#confirm-delete"),
+  publicGallery: document.querySelector("#public-gallery"),
+  publicEmpty: document.querySelector("#public-empty"),
+  publicCount: document.querySelector("#public-count"),
   toasts: document.querySelector("#toast-region"),
 };
 
@@ -53,10 +58,17 @@ const iconPaths = {
   copy: '<rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
   download: '<path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/>',
   edit: '<path d="m4 16-.7 4.7L8 20l11-11-4-4L4 16ZM13.5 6.5l4 4"/>',
+  eye: '<path d="M2.2 12s3.3-6 9.8-6 9.8 6 9.8 6-3.3 6-9.8 6-9.8-6-9.8-6Z"/><circle cx="12" cy="12" r="2.7"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.3 2.5 3.5 5.5 3.5 9S14.3 18.5 12 21c-2.3-2.5-3.5-5.5-3.5-9S9.7 5.5 12 3Z"/>',
   link: '<path d="m9 15 6-6m-7.5 2.5-2 2a3.5 3.5 0 0 0 5 5l2-2m4-5 2-2a3.5 3.5 0 0 0-5-5l-2 2"/>',
   lock: '<rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/>',
+};
+
+const visibilityDetails = {
+  public: { label: "Public", icon: "globe", description: "Shown on the public shelf" },
+  unlisted: { label: "Link only", icon: "link", description: "Anyone with the URL" },
+  private: { label: "Private", icon: "lock", description: "Only inside your vault" },
 };
 
 function svgIcon(name) {
@@ -102,6 +114,7 @@ function showLogin() {
   elements.boot.classList.add("hidden");
   elements.app.classList.add("hidden");
   elements.loginView.classList.remove("hidden");
+  loadPublicUploads();
   window.setTimeout(() => elements.password.focus(), 50);
 }
 
@@ -119,6 +132,19 @@ async function loadUploads() {
     render();
   } catch (error) {
     if (!elements.app.classList.contains("hidden")) toast(error.message, true);
+  }
+}
+
+async function loadPublicUploads() {
+  try {
+    const body = await request("/api/public/uploads");
+    state.publicUploads = body.uploads;
+    renderPublicGallery();
+  } catch (error) {
+    elements.publicGallery.replaceChildren();
+    elements.publicEmpty.classList.remove("hidden");
+    elements.publicEmpty.querySelector("h3").textContent = "The public shelf could not load.";
+    elements.publicEmpty.querySelector("p").textContent = error.message;
   }
 }
 
@@ -230,7 +256,7 @@ async function uploadFiles(files) {
       const headers = {
         "Content-Type": file.type || "application/octet-stream",
         "X-File-Name": encodeURIComponent(file.name || "pasted-image"),
-        "X-Upload-Private": String(elements.privateDefault.checked),
+        "X-Upload-Visibility": selectedVisibility("upload-visibility"),
       };
       if (dimensions) {
         headers["X-Image-Width"] = String(dimensions.width);
@@ -284,17 +310,18 @@ async function getImageDimensions(file) {
 
 function showLatest(upload) {
   state.latestUpload = upload;
-  elements.latestTitle.textContent = upload.isPrivate ? `${upload.title} · private` : upload.title;
+  const visibility = visibilityDetails[upload.visibility];
+  elements.latestTitle.textContent = `${upload.title} · ${visibility.label.toLowerCase()}`;
   elements.latestUrl.value = upload.url;
   const label = elements.latestCopy.querySelector("span");
-  label.textContent = upload.isPrivate ? "Private" : "Copy";
-  elements.latestCopy.disabled = upload.isPrivate;
-  elements.latestCopy.title = upload.isPrivate ? "Make this upload public before sharing its URL" : "Copy image URL";
+  label.textContent = upload.visibility === "private" ? "Private" : "Copy";
+  elements.latestCopy.disabled = upload.visibility === "private";
+  elements.latestCopy.title = upload.visibility === "private" ? "Choose Public or Link only before sharing" : "Copy image URL";
   elements.latestResult.classList.remove("hidden");
 }
 
 elements.latestCopy.addEventListener("click", async () => {
-  if (!state.latestUpload || state.latestUpload.isPrivate) return;
+  if (!state.latestUpload || state.latestUpload.visibility === "private") return;
   await copyText(state.latestUpload.url);
   const label = elements.latestCopy.querySelector("span");
   label.textContent = "Copied";
@@ -320,14 +347,69 @@ elements.filters.addEventListener("click", (event) => {
 
 function render() {
   elements.statTotal.textContent = String(state.uploads.length);
+  elements.statViews.textContent = formatCount(state.uploads.reduce((sum, upload) => sum + upload.views, 0));
   elements.statStorage.textContent = formatBytes(state.uploads.reduce((sum, upload) => sum + upload.size, 0));
-  elements.statPrivate.textContent = String(state.uploads.filter((upload) => upload.isPrivate).length);
+  elements.statPrivate.textContent = String(state.uploads.filter((upload) => upload.visibility === "private").length);
   renderGallery();
+}
+
+function renderPublicGallery() {
+  const uploads = state.publicUploads;
+  elements.publicGallery.replaceChildren(...uploads.map(makePublicCard));
+  elements.publicEmpty.classList.toggle("hidden", uploads.length > 0);
+  elements.publicCount.textContent = `${uploads.length} ${uploads.length === 1 ? "image" : "images"}`;
+}
+
+function makePublicCard(upload) {
+  const card = document.createElement("article");
+  card.className = "public-card";
+
+  const imageLink = document.createElement("a");
+  imageLink.className = "public-card__image";
+  imageLink.href = upload.url;
+  imageLink.target = "_blank";
+  imageLink.rel = "noopener";
+  imageLink.setAttribute("aria-label", `Open ${upload.title}`);
+
+  const image = document.createElement("img");
+  image.src = upload.previewUrl;
+  image.alt = upload.title;
+  image.loading = "lazy";
+  image.decoding = "async";
+  const views = document.createElement("span");
+  views.className = "view-pill";
+  views.append(svgIcon("eye"), document.createTextNode(formatCount(upload.views)));
+  imageLink.append(image, views);
+
+  const body = document.createElement("div");
+  body.className = "public-card__body";
+  const text = document.createElement("span");
+  const title = document.createElement("strong");
+  title.textContent = upload.title;
+  title.title = upload.title;
+  const metadata = document.createElement("small");
+  const dimensions = upload.width && upload.height ? ` · ${upload.width}×${upload.height}` : "";
+  metadata.textContent = `${relativeDate(upload.createdAt)}${dimensions}`;
+  text.append(title, metadata);
+
+  const copy = document.createElement("button");
+  copy.className = "icon-button public-card__copy";
+  copy.type = "button";
+  copy.title = "Copy image URL";
+  copy.setAttribute("aria-label", `Copy URL for ${upload.title}`);
+  copy.append(svgIcon("copy"));
+  copy.addEventListener("click", async () => {
+    await copyText(upload.url);
+    toast("Public image URL copied");
+  });
+  body.append(text, copy);
+  card.append(imageLink, body);
+  return card;
 }
 
 function renderGallery() {
   const uploads = state.uploads.filter((upload) => {
-    const visibilityMatch = state.filter === "all" || (state.filter === "private" ? upload.isPrivate : !upload.isPrivate);
+    const visibilityMatch = state.filter === "all" || upload.visibility === state.filter;
     const searchMatch = !state.search || `${upload.title} ${upload.originalName} ${upload.publicPath}`.toLowerCase().includes(state.search);
     return visibilityMatch && searchMatch;
   });
@@ -347,10 +429,11 @@ function renderGallery() {
 function makeCard(upload) {
   const card = document.createElement("article");
   card.className = "image-card";
+  const visibility = visibilityDetails[upload.visibility];
 
   const imageLink = document.createElement("a");
   imageLink.className = "card-image";
-  imageLink.href = upload.isPrivate ? upload.previewUrl : upload.url;
+  imageLink.href = upload.visibility === "private" ? upload.previewUrl : upload.url;
   imageLink.target = "_blank";
   imageLink.rel = "noopener";
   imageLink.setAttribute("aria-label", `Open ${upload.title}`);
@@ -362,8 +445,8 @@ function makeCard(upload) {
   image.decoding = "async";
 
   const badge = document.createElement("span");
-  badge.className = `privacy-badge ${upload.isPrivate ? "" : "privacy-badge--public"}`;
-  badge.append(svgIcon(upload.isPrivate ? "lock" : "globe"), document.createTextNode(upload.isPrivate ? "Private" : "Public"));
+  badge.className = `privacy-badge privacy-badge--${upload.visibility}`;
+  badge.append(svgIcon(visibility.icon), document.createTextNode(visibility.label));
   imageLink.append(image, badge);
 
   const body = document.createElement("div");
@@ -377,7 +460,7 @@ function makeCard(upload) {
   title.title = upload.title;
   const metadata = document.createElement("p");
   const dimensions = upload.width && upload.height ? ` · ${upload.width}×${upload.height}` : "";
-  metadata.textContent = `${relativeDate(upload.createdAt)} · ${formatBytes(upload.size)}${dimensions}`;
+  metadata.textContent = `${relativeDate(upload.createdAt)} · ${formatBytes(upload.size)}${dimensions} · ${formatCount(upload.views)} ${upload.views === 1 ? "view" : "views"}`;
   titleBlock.append(title, metadata);
 
   const edit = document.createElement("button");
@@ -391,16 +474,16 @@ function makeCard(upload) {
 
   const urlLine = document.createElement("div");
   urlLine.className = "card-url";
-  urlLine.append(svgIcon(upload.isPrivate ? "lock" : "link"));
+  urlLine.append(svgIcon(visibility.icon));
   const urlText = document.createElement("span");
-  urlText.textContent = upload.isPrivate ? "Direct URL disabled while private" : upload.url.replace(/^https?:\/\//, "");
+  urlText.textContent = upload.visibility === "private" ? "Direct URL disabled while private" : upload.url.replace(/^https?:\/\//, "");
   urlLine.append(urlText);
 
   const actions = document.createElement("div");
   actions.className = "card-actions";
   const copy = makeAction("copy", "Copy URL");
-  copy.disabled = upload.isPrivate;
-  copy.title = upload.isPrivate ? "Make this image public before sharing" : "Copy direct URL";
+  copy.disabled = upload.visibility === "private";
+  copy.title = upload.visibility === "private" ? "Choose Public or Link only before sharing" : "Copy direct URL";
   copy.addEventListener("click", async () => {
     await copyText(upload.url);
     toast("Image URL copied");
@@ -438,7 +521,7 @@ function openEdit(id) {
   if (!upload) return;
   state.editingId = id;
   elements.editTitle.value = upload.title;
-  elements.editPrivate.checked = upload.isPrivate;
+  setSelectedVisibility("edit-visibility", upload.visibility);
   elements.editDialog.showModal();
   elements.editTitle.select();
 }
@@ -457,13 +540,14 @@ elements.editForm.addEventListener("submit", async (event) => {
     const body = await request(`/api/uploads/${upload.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: elements.editTitle.value, isPrivate: elements.editPrivate.checked }),
+      body: JSON.stringify({ title: elements.editTitle.value, visibility: selectedVisibility("edit-visibility") }),
     });
     state.uploads = state.uploads.map((item) => item.id === body.upload.id ? body.upload : item);
     if (state.latestUpload?.id === body.upload.id) showLatest(body.upload);
     render();
     elements.editDialog.close();
-    toast(body.upload.isPrivate ? "Image is now private" : "Changes saved — direct URL is live");
+    const detail = visibilityDetails[body.upload.visibility];
+    toast(`Saved as ${detail.label} — ${detail.description.toLowerCase()}`);
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -527,6 +611,19 @@ function toast(message, error = false) {
   item.textContent = message;
   elements.toasts.append(item);
   window.setTimeout(() => item.remove(), 3800);
+}
+
+function selectedVisibility(name) {
+  return document.querySelector(`input[name="${name}"]:checked`)?.value ?? "unlisted";
+}
+
+function setSelectedVisibility(name, value) {
+  const input = document.querySelector(`input[name="${name}"][value="${value}"]`);
+  if (input) input.checked = true;
+}
+
+function formatCount(value) {
+  return new Intl.NumberFormat(undefined, { notation: value >= 10_000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value);
 }
 
 function formatBytes(bytes) {

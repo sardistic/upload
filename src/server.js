@@ -263,10 +263,32 @@ function serializeUpload(upload, config) {
     size: upload.size,
     width: upload.width ?? null,
     height: upload.height ?? null,
-    isPrivate: upload.isPrivate,
+    visibility: upload.visibility,
+    views: upload.views,
     createdAt: upload.createdAt,
     updatedAt: upload.updatedAt,
   };
+}
+
+function serializePublicUpload(upload, config) {
+  return {
+    id: upload.id,
+    title: upload.title,
+    publicPath: upload.publicPath,
+    url: `${config.baseUrl}${upload.publicPath}`,
+    previewUrl: `/api/public/uploads/${upload.id}/content`,
+    mime: upload.mime,
+    size: upload.size,
+    width: upload.width ?? null,
+    height: upload.height ?? null,
+    views: upload.views,
+    createdAt: upload.createdAt,
+  };
+}
+
+function parseVisibility(value, fallback = null) {
+  const visibility = String(value ?? "").toLowerCase();
+  return ["public", "unlisted", "private"].includes(visibility) ? visibility : fallback;
 }
 
 function isSameOrigin(request, config) {
@@ -284,9 +306,10 @@ function requireOwner(request, response, config) {
   return false;
 }
 
-async function serveImage(request, response, upload, store, ownerView = false) {
+async function serveImage(request, response, upload, store, ownerView = false, countView = false) {
   try {
     const details = await stat(store.imagePath(upload));
+    if (countView && request.method === "GET") await store.incrementViews(upload.id);
     const headers = baseHeaders({
       "Content-Type": upload.mime,
       "Content-Length": details.size,
@@ -362,6 +385,14 @@ export async function createSardropServer(overrides = {}) {
         });
       }
 
+      if (url.pathname === "/api/public/uploads" && request.method === "GET") {
+        return sendJson(response, 200, {
+          uploads: store.list()
+            .filter((upload) => upload.visibility === "public")
+            .map((upload) => serializePublicUpload(upload, config)),
+        });
+      }
+
       if (url.pathname === "/api/uploads" && request.method === "POST") {
         if (!requireOwner(request, response, config)) return;
         if (!isSameOrigin(request, config)) return sendJson(response, 403, { error: "Origin not allowed" });
@@ -378,6 +409,11 @@ export async function createSardropServer(overrides = {}) {
         } while (store.hasPath(publicPath));
 
         const originalName = cleanFilename(request.headers["x-file-name"], detected.extension);
+        const requestedVisibility = request.headers["x-upload-visibility"];
+        const visibility = requestedVisibility === undefined
+          ? (request.headers["x-upload-private"] === "true" ? "private" : "unlisted")
+          : parseVisibility(requestedVisibility);
+        if (!visibility) return sendJson(response, 400, { error: "Invalid visibility" });
         const now = new Date().toISOString();
         const upload = {
           id: randomUUID(),
@@ -390,7 +426,8 @@ export async function createSardropServer(overrides = {}) {
           size: imageBuffer.length,
           width: detected.width ?? positiveInteger(request.headers["x-image-width"]),
           height: detected.height ?? positiveInteger(request.headers["x-image-height"]),
-          isPrivate: request.headers["x-upload-private"] === "true",
+          visibility,
+          views: 0,
           createdAt: now,
           updatedAt: now,
         };
@@ -406,13 +443,27 @@ export async function createSardropServer(overrides = {}) {
         return serveImage(request, response, upload, store, true);
       }
 
+      const publicContentMatch = url.pathname.match(/^\/api\/public\/uploads\/([0-9a-f-]+)\/content$/i);
+      if (publicContentMatch && (request.method === "GET" || request.method === "HEAD")) {
+        const upload = store.findById(publicContentMatch[1]);
+        if (!upload || upload.visibility !== "public") {
+          return sendJson(response, 404, { error: "Image not found" });
+        }
+        return serveImage(request, response, upload, store, false);
+      }
+
       const itemMatch = url.pathname.match(/^\/api\/uploads\/([0-9a-f-]+)$/i);
       if (itemMatch && request.method === "PATCH") {
         if (!requireOwner(request, response, config)) return;
         if (!isSameOrigin(request, config)) return sendJson(response, 403, { error: "Origin not allowed" });
         const body = await readJson(request);
         const changes = {};
-        if (Object.hasOwn(body, "isPrivate")) changes.isPrivate = Boolean(body.isPrivate);
+        if (Object.hasOwn(body, "visibility")) {
+          changes.visibility = parseVisibility(body.visibility);
+          if (!changes.visibility) return sendJson(response, 400, { error: "Invalid visibility" });
+        } else if (Object.hasOwn(body, "isPrivate")) {
+          changes.visibility = body.isPrivate ? "private" : "unlisted";
+        }
         if (Object.hasOwn(body, "title")) changes.title = cleanTitle(body.title);
         if (!Object.keys(changes).length) return sendJson(response, 400, { error: "No supported changes provided" });
         const upload = await store.update(itemMatch[1], changes);
@@ -431,8 +482,8 @@ export async function createSardropServer(overrides = {}) {
       const publicImageMatch = url.pathname.match(/^\/[a-z0-9]+(?:-[a-z0-9]+)*\.(?:png|jpg|gif|webp|avif)$/);
       if (publicImageMatch && (request.method === "GET" || request.method === "HEAD")) {
         const upload = store.findByPath(url.pathname);
-        if (!upload || upload.isPrivate) return sendJson(response, 404, { error: "Image not found" });
-        return serveImage(request, response, upload, store, false);
+        if (!upload || upload.visibility === "private") return sendJson(response, 404, { error: "Image not found" });
+        return serveImage(request, response, upload, store, false, true);
       }
 
       if (url.pathname === "/robots.txt" && request.method === "GET") {

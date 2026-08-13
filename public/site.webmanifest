@@ -4,8 +4,8 @@
   "description": "Paste-to-image URLs on upload.sardistic.com",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f2eee6",
-  "theme_color": "#f2eee6",
+  "background_color": "#0d0e12",
+  "theme_color": "#0d0e12",
   "icons": [
     { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
   ]

@@ -50,7 +50,14 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.equal(home.status, 200);
   assert.match(home.headers.get("content-security-policy"), /default-src 'self'/);
   assert.match(home.headers.get("content-security-policy"), /img-src 'self' https:\/\/veles\.cards/);
-  assert.match(await home.text(), /upload\.sardistic\.com/);
+  const homeHtml = await home.text();
+  assert.match(homeHtml, /upload\.sardistic\.com/);
+  assert.match(homeHtml, /<html lang="en" data-theme="dark">/);
+  assert.match(homeHtml, /\/theme\.js\?v=4/);
+  const themeScript = await fetch(`${app.origin}/theme.js?v=4`);
+  assert.equal(themeScript.status, 200);
+  assert.match(themeScript.headers.get("content-type"), /text\/javascript/);
+  assert.match(await themeScript.text(), /upload-sardistic-theme/);
 
   const anonymousList = await fetch(`${app.origin}/api/uploads`);
   assert.equal(anonymousList.status, 401);

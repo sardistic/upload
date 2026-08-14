@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "A private, self-hosted paste-to-image-URL service.",
+  "description": "A private, self-hosted paste-to-media-URL service.",
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",

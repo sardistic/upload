@@ -49,7 +49,7 @@ const loginAttempts = new Map();
 
 function loadConfig(overrides = {}) {
   const port = Number(overrides.port ?? process.env.PORT ?? 3000);
-  const maxUploadMb = Number(overrides.maxUploadMb ?? process.env.MAX_UPLOAD_MB ?? 25);
+  const maxUploadMb = Number(overrides.maxUploadMb ?? process.env.MAX_UPLOAD_MB ?? 50);
   const sessionDays = Number(overrides.sessionDays ?? process.env.SESSION_DAYS ?? 30);
   const password = overrides.password ?? process.env.APP_PASSWORD;
   const sessionSecret = overrides.sessionSecret ?? process.env.SESSION_SECRET;
@@ -214,6 +214,17 @@ async function readJson(request, maximumBytes = 16_384) {
   }
 }
 
+function readFtypBrands(buffer) {
+  if (buffer.length < 16 || buffer.subarray(4, 8).toString("ascii") !== "ftyp") return [];
+  const boxSize = buffer.readUInt32BE(0);
+  if (boxSize < 16 || boxSize > buffer.length) return [];
+  const brands = [buffer.subarray(8, 12).toString("ascii")];
+  for (let offset = 16; offset + 4 <= boxSize; offset += 4) {
+    brands.push(buffer.subarray(offset, offset + 4).toString("ascii"));
+  }
+  return brands;
+}
+
 function detectImage(buffer) {
   if (buffer.length >= 24 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
     return {
@@ -238,14 +249,67 @@ function detectImage(buffer) {
   if (buffer.length >= 12 && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") {
     return { mime: "image/webp", extension: "webp" };
   }
-  if (buffer.length >= 12 && buffer.subarray(4, 8).toString("ascii") === "ftyp") {
-    const brand = buffer.subarray(8, 12).toString("ascii");
-    if (brand === "avif" || brand === "avis") return { mime: "image/avif", extension: "avif" };
+  if (readFtypBrands(buffer).some((brand) => brand === "avif" || brand === "avis")) {
+    return { mime: "image/avif", extension: "avif" };
   }
   return null;
 }
 
-function cleanFilename(headerValue, fallbackExtension) {
+function detectMedia(buffer, claimedMime = "", suppliedName = "") {
+  const image = detectImage(buffer);
+  if (image) return { ...image, mediaKind: "image" };
+
+  const mime = String(claimedMime).split(";", 1)[0].trim().toLowerCase();
+  const extension = path.extname(String(suppliedName)).slice(1).toLowerCase();
+
+  if (
+    buffer.length >= 12
+    && buffer.subarray(0, 4).toString("ascii") === "RIFF"
+    && buffer.subarray(8, 12).toString("ascii") === "WAVE"
+  ) {
+    return { mediaKind: "audio", mime: "audio/wav", extension: "wav" };
+  }
+  if (buffer.length >= 4 && buffer.subarray(0, 4).toString("ascii") === "fLaC") {
+    return { mediaKind: "audio", mime: "audio/flac", extension: "flac" };
+  }
+  if (buffer.length >= 4 && buffer.subarray(0, 4).toString("ascii") === "OggS") {
+    return { mediaKind: "audio", mime: "audio/ogg", extension: "ogg" };
+  }
+  if (
+    buffer.length >= 3
+    && (
+      buffer.subarray(0, 3).toString("ascii") === "ID3"
+      || (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0 && (mime === "audio/mpeg" || extension === "mp3"))
+    )
+  ) {
+    return { mediaKind: "audio", mime: "audio/mpeg", extension: "mp3" };
+  }
+  if (buffer.length >= 4 && buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) {
+    const audioOnly = mime.startsWith("audio/");
+    return {
+      mediaKind: audioOnly ? "audio" : "video",
+      mime: audioOnly ? "audio/webm" : "video/webm",
+      extension: "webm",
+    };
+  }
+  const brands = readFtypBrands(buffer);
+  if (brands.length) {
+    const supportedBrands = new Set([
+      "isom", "iso2", "iso5", "iso6", "mp41", "mp42", "avc1", "M4V ", "F4V ",
+      "dash", "MSNV", "3gp4", "3gp5", "M4A ", "M4B ", "M4P ", "qt  ",
+    ]);
+    if (!brands.some((brand) => supportedBrands.has(brand))) return null;
+    const audioOnly = mime.startsWith("audio/") || extension === "m4a" || brands.some((brand) => ["M4A ", "M4B ", "M4P "].includes(brand));
+    if (audioOnly) return { mediaKind: "audio", mime: "audio/mp4", extension: "m4a" };
+    if (brands.includes("qt  ") || mime === "video/quicktime" || extension === "mov") {
+      return { mediaKind: "video", mime: "video/quicktime", extension: "mov" };
+    }
+    return { mediaKind: "video", mime: "video/mp4", extension: "mp4" };
+  }
+  return null;
+}
+
+function cleanFilename(headerValue, fallbackExtension, mediaKind = "file") {
   let value = String(headerValue ?? "");
   try {
     value = decodeURIComponent(value);
@@ -253,10 +317,10 @@ function cleanFilename(headerValue, fallbackExtension) {
     value = "";
   }
   value = path.basename(value).replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 180);
-  return value || `pasted-image.${fallbackExtension}`;
+  return value || `pasted-${mediaKind}.${fallbackExtension}`;
 }
 
-function cleanTitle(value, fallback = "Untitled image") {
+function cleanTitle(value, fallback = "Untitled upload") {
   const title = String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 120);
   return title || fallback;
 }
@@ -313,11 +377,13 @@ function serializeUpload(upload, config) {
     aliasPath: upload.aliasPath ?? null,
     aliasUrl: upload.aliasPath ? `${config.baseUrl}${upload.aliasPath}` : null,
     previewUrl: `/api/uploads/${upload.id}/content`,
+    mediaKind: upload.mediaKind ?? "image",
     mime: upload.mime,
     extension: upload.extension,
     size: upload.size,
     width: upload.width ?? null,
     height: upload.height ?? null,
+    duration: upload.duration ?? null,
     visibility: upload.visibility,
     views: upload.views,
     tags: upload.tags ?? [],
@@ -338,10 +404,13 @@ function serializePublicUpload(upload, config) {
     url: `${config.baseUrl}${upload.publicPath}`,
     aliasUrl: upload.aliasPath ? `${config.baseUrl}${upload.aliasPath}` : null,
     previewUrl: `/api/public/uploads/${upload.id}/content`,
+    mediaKind: upload.mediaKind ?? "image",
     mime: upload.mime,
+    extension: upload.extension,
     size: upload.size,
     width: upload.width ?? null,
     height: upload.height ?? null,
+    duration: upload.duration ?? null,
     views: upload.views,
     createdAt: upload.createdAt,
   };
@@ -367,23 +436,60 @@ function requireOwner(request, response, config) {
   return false;
 }
 
-async function serveImage(request, response, upload, store, ownerView = false, countView = false) {
+function parseByteRange(value, size) {
+  if (value === undefined) return null;
+  const match = String(value).match(/^bytes=(\d*)-(\d*)$/);
+  if (!match || (!match[1] && !match[2])) return false;
+
+  let start;
+  let end;
+  if (!match[1]) {
+    const suffixLength = Number(match[2]);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return false;
+    start = Math.max(0, size - suffixLength);
+    end = size - 1;
+  } else {
+    start = Number(match[1]);
+    end = match[2] ? Number(match[2]) : size - 1;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) return false;
+    if (start >= size) return false;
+    end = Math.min(end, size - 1);
+  }
+  return { start, end };
+}
+
+async function serveMedia(request, response, upload, store, ownerView = false, countView = false) {
   try {
-    const details = await stat(store.imagePath(upload));
-    if (countView && request.method === "GET") await store.incrementViews(upload.id);
+    const mediaPath = store.mediaPath(upload);
+    const details = await stat(mediaPath);
+    const range = parseByteRange(request.headers.range, details.size);
+    if (range === false) {
+      response.writeHead(416, baseHeaders({
+        "Content-Range": `bytes */${details.size}`,
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store",
+      }));
+      return response.end();
+    }
+    if (countView && request.method === "GET" && (!range || range.start === 0)) {
+      await store.incrementViews(upload.id);
+    }
+    const contentLength = range ? range.end - range.start + 1 : details.size;
     const headers = baseHeaders({
       "Content-Type": upload.mime,
-      "Content-Length": details.size,
+      "Content-Length": contentLength,
+      "Accept-Ranges": "bytes",
       "Cache-Control": "no-store",
       "Content-Disposition": `inline; filename="${upload.publicPath.slice(1).replace(/[^a-zA-Z0-9._-]/g, "_")}"`,
       "Cross-Origin-Resource-Policy": ownerView ? "same-origin" : "cross-origin",
       "X-Robots-Tag": "noindex, nofollow, noarchive",
     });
-    response.writeHead(200, headers);
+    if (range) headers["Content-Range"] = `bytes ${range.start}-${range.end}/${details.size}`;
+    response.writeHead(range ? 206 : 200, headers);
     if (request.method === "HEAD") return response.end();
-    createReadStream(store.imagePath(upload)).pipe(response);
+    createReadStream(mediaPath, range ? { start: range.start, end: range.end } : undefined).pipe(response);
   } catch (error) {
-    if (error.code === "ENOENT") return sendJson(response, 404, { error: "Image not found" });
+    if (error.code === "ENOENT") return sendJson(response, 404, { error: "File not found" });
     throw error;
   }
 }
@@ -407,7 +513,7 @@ export async function createSardropServer(overrides = {}) {
         response.writeHead(200, baseHeaders({
           "Content-Type": contentType,
           "Cache-Control": url.pathname === "/" ? "no-cache" : (immutable ? "public, max-age=31536000, immutable" : "public, max-age=3600"),
-          "Content-Security-Policy": "default-src 'self'; img-src 'self' https://veles.cards blob: data:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+          "Content-Security-Policy": "default-src 'self'; img-src 'self' https://veles.cards blob: data:; media-src 'self' blob:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
         }));
         return response.end(body);
       }
@@ -457,10 +563,15 @@ export async function createSardropServer(overrides = {}) {
       if (url.pathname === "/api/uploads" && request.method === "POST") {
         if (!requireOwner(request, response, config)) return;
         if (!isSameOrigin(request, config)) return sendJson(response, 403, { error: "Origin not allowed" });
-        const imageBuffer = await readBody(request, config.maxUploadBytes);
-        if (!imageBuffer.length) return sendJson(response, 400, { error: "No image data received" });
-        const detected = detectImage(imageBuffer);
-        if (!detected) return sendJson(response, 415, { error: "Use a PNG, JPEG, GIF, WebP, or AVIF image" });
+        const mediaBuffer = await readBody(request, config.maxUploadBytes);
+        if (!mediaBuffer.length) return sendJson(response, 400, { error: "No file data received" });
+        const suppliedName = request.headers["x-file-name"];
+        const detected = detectMedia(mediaBuffer, request.headers["content-type"], suppliedName);
+        if (!detected) {
+          return sendJson(response, 415, {
+            error: "Use PNG, JPEG, GIF, WebP, AVIF, MP4, MOV, WebM, MP3, M4A, OGG, WAV, or FLAC",
+          });
+        }
 
         let slug;
         let publicPath;
@@ -469,7 +580,7 @@ export async function createSardropServer(overrides = {}) {
           publicPath = `/${slug}.${detected.extension}`;
         } while (store.hasPath(publicPath));
 
-        const originalName = cleanFilename(request.headers["x-file-name"], detected.extension);
+        const originalName = cleanFilename(suppliedName, detected.extension, detected.mediaKind);
         const requestedVisibility = request.headers["x-upload-visibility"];
         const visibility = requestedVisibility === undefined
           ? (request.headers["x-upload-private"] === "true" ? "private" : "unlisted")
@@ -481,12 +592,17 @@ export async function createSardropServer(overrides = {}) {
           slug,
           extension: detected.extension,
           mime: detected.mime,
+          mediaKind: detected.mediaKind,
           publicPath,
           originalName,
-          title: cleanTitle(request.headers["x-image-title"], path.parse(originalName).name || "Pasted image"),
-          size: imageBuffer.length,
-          width: detected.width ?? positiveInteger(request.headers["x-image-width"]),
-          height: detected.height ?? positiveInteger(request.headers["x-image-height"]),
+          title: cleanTitle(
+            request.headers["x-media-title"] ?? request.headers["x-image-title"],
+            path.parse(originalName).name || `Pasted ${detected.mediaKind}`,
+          ),
+          size: mediaBuffer.length,
+          width: detected.width ?? positiveInteger(request.headers["x-media-width"] ?? request.headers["x-image-width"]),
+          height: detected.height ?? positiveInteger(request.headers["x-media-height"] ?? request.headers["x-image-height"]),
+          duration: detected.mediaKind === "image" ? null : positiveNumber(request.headers["x-media-duration"]),
           visibility,
           views: 0,
           tags: [],
@@ -498,7 +614,7 @@ export async function createSardropServer(overrides = {}) {
           createdAt: now,
           updatedAt: now,
         };
-        await store.create(upload, imageBuffer);
+        await store.create(upload, mediaBuffer);
         return sendJson(response, 201, { upload: serializeUpload(upload, config) });
       }
 
@@ -507,16 +623,16 @@ export async function createSardropServer(overrides = {}) {
         if (!requireOwner(request, response, config)) return;
         const upload = store.findById(contentMatch[1]);
         if (!upload) return sendJson(response, 404, { error: "Upload not found" });
-        return serveImage(request, response, upload, store, true);
+        return serveMedia(request, response, upload, store, true);
       }
 
       const publicContentMatch = url.pathname.match(/^\/api\/public\/uploads\/([0-9a-f-]+)\/content$/i);
       if (publicContentMatch && (request.method === "GET" || request.method === "HEAD")) {
         const upload = store.findById(publicContentMatch[1]);
         if (!upload || upload.visibility !== "public") {
-          return sendJson(response, 404, { error: "Image not found" });
+          return sendJson(response, 404, { error: "File not found" });
         }
-        return serveImage(request, response, upload, store, false);
+        return serveMedia(request, response, upload, store, false);
       }
 
       const itemMatch = url.pathname.match(/^\/api\/uploads\/([0-9a-f-]+)$/i);
@@ -539,6 +655,9 @@ export async function createSardropServer(overrides = {}) {
         }
         if (Object.hasOwn(body, "tags")) changes.tags = cleanTags(body.tags);
         if (body.ocr && typeof body.ocr === "object") {
+          if ((existingUpload.mediaKind ?? "image") !== "image") {
+            return sendJson(response, 400, { error: "OCR is available for images only" });
+          }
           changes.ocrText = cleanOcrText(body.ocr.text);
           changes.ocrConfidence = cleanConfidence(body.ocr.confidence);
           changes.tags = cleanTags(body.ocr.tags);
@@ -581,11 +700,11 @@ export async function createSardropServer(overrides = {}) {
         return sendEmpty(response, 204);
       }
 
-      const publicImageMatch = url.pathname.match(/^\/[a-z0-9]+(?:-[a-z0-9]+)*\.(?:png|jpg|gif|webp|avif)$/);
-      if (publicImageMatch && (request.method === "GET" || request.method === "HEAD")) {
+      const publicMediaMatch = url.pathname.match(/^\/[a-z0-9]+(?:-[a-z0-9]+)*\.(?:png|jpg|gif|webp|avif|mp4|mov|webm|mp3|m4a|ogg|wav|flac)$/);
+      if (publicMediaMatch && (request.method === "GET" || request.method === "HEAD")) {
         const upload = store.findByPath(url.pathname);
-        if (!upload || upload.visibility === "private") return sendJson(response, 404, { error: "Image not found" });
-        return serveImage(request, response, upload, store, false, true);
+        if (!upload || upload.visibility === "private") return sendJson(response, 404, { error: "File not found" });
+        return serveMedia(request, response, upload, store, false, true);
       }
 
       if (url.pathname === "/robots.txt" && request.method === "GET") {
@@ -612,6 +731,13 @@ export async function createSardropServer(overrides = {}) {
 function positiveInteger(value) {
   const number = Number(value);
   return Number.isInteger(number) && number > 0 && number <= 100_000 ? number : null;
+}
+
+function positiveNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 && number <= 604_800
+    ? Math.round(number * 1000) / 1000
+    : null;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

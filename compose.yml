@@ -10,7 +10,7 @@ services:
       BASE_URL: https://upload.sardistic.com
       APP_PASSWORD: ${APP_PASSWORD:?APP_PASSWORD is required}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
-      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
       SESSION_DAYS: ${SESSION_DAYS:-30}
     volumes:
       - ./data:/data

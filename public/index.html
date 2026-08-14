@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#101114">
     <meta name="robots" content="noindex, nofollow, noarchive">
-    <title>upload.sardistic.com — image archive</title>
+    <title>upload.sardistic.com — media archive</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="manifest" href="/site.webmanifest">
     <script src="/theme.js?v=5" data-cfasync="false"></script>
-    <link rel="stylesheet" href="/styles.css?v=6">
+    <link rel="stylesheet" href="/styles.css?v=7">
   </head>
   <body>
     <div class="boot-screen" id="boot-screen" aria-live="polite">
@@ -112,22 +112,22 @@
         <section class="upload-workspace" aria-labelledby="upload-title">
           <div class="workspace-copy">
             <p class="kicker">New upload</p>
-            <h1 id="upload-title">Paste an image.</h1>
-            <p>Use <kbd>Ctrl</kbd> + <kbd>V</kbd> anywhere outside a text field, or drop files into the panel.</p>
+            <h1 id="upload-title">Put it somewhere.</h1>
+            <p>Paste with <kbd>Ctrl</kbd> + <kbd>V</kbd>, drop it, or choose it. The result is a URL with exactly the reach you assign.</p>
             <label class="ocr-switch" for="auto-ocr">
               <input id="auto-ocr" type="checkbox" checked>
               <span class="ocr-switch__control" aria-hidden="true"></span>
-              <span><strong>Local OCR</strong><small>Auto-name and tag screenshots in this browser.</small></span>
+              <span><strong>Local OCR</strong><small>Auto-name and tag images in this browser.</small></span>
             </label>
           </div>
 
           <div class="drop-card" id="drop-card">
-            <input class="visually-hidden" id="file-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" multiple>
+            <input class="visually-hidden" id="file-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif,video/mp4,video/quicktime,video/webm,audio/mpeg,audio/mp4,audio/ogg,audio/wav,audio/x-wav,audio/flac,audio/webm,.mov,.m4a,.mp3,.ogg,.wav,.flac,.webm" multiple>
             <div class="drop-card__main">
               <span class="drop-card__plus" aria-hidden="true">+</span>
               <div>
                 <h2>Drop, paste, or choose</h2>
-                <p>PNG · JPG · GIF · WebP · AVIF</p>
+                <p>IMAGE · VIDEO · AUDIO / 13 FORMATS</p>
               </div>
               <button class="primary-button" id="choose-button" type="button">Choose files</button>
             </div>
@@ -145,7 +145,7 @@
           <span class="success-mark" aria-hidden="true">✓</span>
           <div class="latest-result__copy"><span>Latest upload</span><strong id="latest-title"></strong></div>
           <div class="url-field">
-            <input id="latest-url" readonly aria-label="Latest image URL">
+            <input id="latest-url" readonly aria-label="Latest file URL">
             <button class="copy-button" id="latest-copy" type="button"><span>Copy</span></button>
           </div>
           <button class="icon-button result-close" id="result-close" type="button" aria-label="Dismiss result">×</button>
@@ -155,7 +155,7 @@
           <div class="library-heading">
             <div><p class="kicker">Owner collection</p><h2 id="library-title">Upload index</h2></div>
             <div class="stats" aria-label="Upload statistics">
-              <div><strong id="stat-total">0</strong><span>images</span></div>
+              <div><strong id="stat-total">0</strong><span>files</span></div>
               <div><strong id="stat-views">0</strong><span>views</span></div>
               <div><strong id="stat-storage">0 B</strong><span>stored</span></div>
               <div><strong id="stat-private">0</strong><span>private</span></div>
@@ -179,7 +179,7 @@
           <div class="empty-state hidden" id="empty-state">
             <span class="empty-state__mark" aria-hidden="true">∅</span>
             <h3 id="empty-title">No uploads.</h3>
-            <p id="empty-copy">Paste a screenshot to create the first URL.</p>
+            <p id="empty-copy">Paste or drop a file to create the first URL.</p>
           </div>
         </section>
       </main>
@@ -193,7 +193,7 @@
     <dialog class="modal" id="edit-dialog">
       <form method="dialog" id="edit-form">
         <div class="modal-header">
-          <div><p class="kicker">Upload settings</p><h2>Edit image</h2></div>
+          <div><p class="kicker">Upload settings</p><h2>Edit file</h2></div>
           <button class="icon-button" value="cancel" aria-label="Close">×</button>
         </div>
         <label class="field-label" for="edit-title">Title</label>
@@ -217,7 +217,7 @@
     <dialog class="modal modal--danger" id="delete-dialog">
       <form method="dialog" id="delete-form">
         <span class="danger-mark" aria-hidden="true">!</span>
-        <h2>Delete image?</h2>
+        <h2>Delete file?</h2>
         <p><strong id="delete-title"></strong> and its direct URL will be permanently removed.</p>
         <div class="modal-actions">
           <button class="secondary-button" value="cancel" formnovalidate>Keep</button>
@@ -227,6 +227,6 @@
     </dialog>
 
     <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
-    <script src="/app.js?v=8" type="module"></script>
+    <script src="/app.js?v=9" type="module"></script>
   </body>
 </html>

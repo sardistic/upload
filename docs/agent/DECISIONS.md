@@ -39,3 +39,11 @@ The alias resolves to the same stored file, obeys the image's current Public/Lin
 ## 2026-08-13 — Public index without a marketing hero
 
 The anonymous page begins with a compact object manifest rather than a conventional headline, explanatory subtitle, and scroll call-to-action. Host, ordering, surface mode, object count, and the three visibility rules are expressed as terse read-only index metadata, with the contact sheet immediately following. This keeps the public surface product-like and specific to image infrastructure instead of resembling a generic landing page.
+
+## 2026-08-13 — Validated media objects and range-aware delivery
+
+The upload store accepts a deliberately small set of browser-oriented image, video, and audio containers after checking their byte signatures. Supported video containers are MP4, QuickTime/MOV, and WebM; supported audio containers are MP3, MP4/M4A, OGG, WAV, FLAC, and audio WebM. SVG and arbitrary renamed files remain unsupported. Metadata version 5 adds `mediaKind` and optional duration while migrating every older record as an image without moving or renaming stored bytes.
+
+All media uses the existing canonical/alias paths and Public/Link-only/Private rules. File responses advertise byte ranges and return a single requested range with `206`, which makes browser playback and seeking reliable. A full direct GET or a range beginning at byte zero increments the shared view count; later seek ranges, HEAD requests, owner previews, and public-index previews do not. This avoids treating one playback session as many views.
+
+Browser-local OCR remains image-only. Audio and video still support manual titles, tags, tag-derived aliases, search, visibility changes, downloads, and deletion. The default per-file limit is 50 MB, within the existing 100 MB configuration ceiling and the single-process in-memory upload architecture.

@@ -10,6 +10,25 @@ const onePixelPng = Buffer.from(
   "base64",
 );
 
+const tinyWav = Buffer.alloc(52);
+tinyWav.write("RIFF", 0, "ascii");
+tinyWav.writeUInt32LE(44, 4);
+tinyWav.write("WAVEfmt ", 8, "ascii");
+tinyWav.writeUInt32LE(16, 16);
+tinyWav.writeUInt16LE(1, 20);
+tinyWav.writeUInt16LE(1, 22);
+tinyWav.writeUInt32LE(8_000, 24);
+tinyWav.writeUInt32LE(8_000, 28);
+tinyWav.writeUInt16LE(1, 32);
+tinyWav.writeUInt16LE(8, 34);
+tinyWav.write("data", 36, "ascii");
+tinyWav.writeUInt32LE(8, 40);
+
+const tinyMp4 = Buffer.alloc(24);
+tinyMp4.writeUInt32BE(24, 0);
+tinyMp4.write("ftypmp42", 4, "ascii");
+tinyMp4.write("isommp42", 16, "ascii");
+
 async function startApp(dataDir) {
   const app = await createSardropServer({
     dataDir,
@@ -50,14 +69,15 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.equal(home.status, 200);
   assert.match(home.headers.get("content-security-policy"), /default-src 'self'/);
   assert.match(home.headers.get("content-security-policy"), /img-src 'self' https:\/\/veles\.cards/);
+  assert.match(home.headers.get("content-security-policy"), /media-src 'self' blob:/);
   assert.match(home.headers.get("content-security-policy"), /worker-src 'self' blob:/);
   assert.match(home.headers.get("content-security-policy"), /wasm-unsafe-eval/);
   const homeHtml = await home.text();
   assert.match(homeHtml, /upload\.sardistic\.com/);
   assert.match(homeHtml, /<html lang="en" data-theme="dark">/);
   assert.match(homeHtml, /\/theme\.js\?v=5/);
-  assert.match(homeHtml, /\/styles\.css\?v=6/);
-  assert.match(homeHtml, /\/app\.js\?v=8/);
+  assert.match(homeHtml, /\/styles\.css\?v=7/);
+  assert.match(homeHtml, /\/app\.js\?v=9/);
   assert.match(homeHtml, /Local OCR/);
   assert.match(homeHtml, /public_objects/);
   assert.doesNotMatch(homeHtml, /A small place/);
@@ -69,7 +89,7 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   const ocrModule = await fetch(`${app.origin}/ocr.js?v=1`);
   assert.equal(ocrModule.status, 200);
   assert.match(await ocrModule.text(), /recognizeLocally/);
-  const appScript = await fetch(`${app.origin}/app.js?v=8`);
+  const appScript = await fetch(`${app.origin}/app.js?v=9`);
   assert.equal(appScript.status, 200);
   assert.match(await appScript.text(), /OCR complete · low confidence/);
   const tesseractScript = await fetch(`${app.origin}/vendor/tesseract/tesseract.min.js`);
@@ -103,8 +123,10 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.equal(uploadResponse.status, 201);
   const { upload } = await uploadResponse.json();
   assert.equal(upload.mime, "image/png");
+  assert.equal(upload.mediaKind, "image");
   assert.equal(upload.width, 1);
   assert.equal(upload.height, 1);
+  assert.equal(upload.duration, null);
   assert.equal(upload.visibility, "public");
   assert.equal(upload.views, 0);
   assert.deepEqual(upload.tags, []);
@@ -264,6 +286,93 @@ test("rejects cross-origin mutations and unsupported file data", async (context)
   assert.equal(fakeImage.status, 415);
 });
 
+test("accepts audio and video media with range playback and stable view counts", async (context) => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "sardrop-media-test-"));
+  context.after(() => rm(dataDir, { recursive: true, force: true }));
+  const app = await startApp(dataDir);
+  context.after(() => app.close());
+  const cookie = await login(app);
+
+  const audioResponse = await fetch(`${app.origin}/api/uploads`, {
+    method: "POST",
+    headers: {
+      Cookie: cookie,
+      Origin: app.origin,
+      "Content-Type": "audio/wav",
+      "X-File-Name": encodeURIComponent("short signal.wav"),
+      "X-Media-Duration": "2.25",
+      "X-Upload-Visibility": "public",
+    },
+    body: tinyWav,
+  });
+  assert.equal(audioResponse.status, 201);
+  const audio = (await audioResponse.json()).upload;
+  assert.equal(audio.mediaKind, "audio");
+  assert.equal(audio.mime, "audio/wav");
+  assert.equal(audio.extension, "wav");
+  assert.equal(audio.duration, 2.25);
+  assert.match(audio.publicPath, /\.wav$/);
+
+  const firstRange = await fetch(`${app.origin}${audio.publicPath}`, {
+    headers: { Range: "bytes=0-11" },
+  });
+  assert.equal(firstRange.status, 206);
+  assert.equal(firstRange.headers.get("accept-ranges"), "bytes");
+  assert.equal(firstRange.headers.get("content-range"), `bytes 0-11/${tinyWav.length}`);
+  assert.equal(firstRange.headers.get("content-length"), "12");
+  assert.deepEqual(Buffer.from(await firstRange.arrayBuffer()), tinyWav.subarray(0, 12));
+
+  const seekRange = await fetch(`${app.origin}${audio.publicPath}`, {
+    headers: { Range: "bytes=12-19" },
+  });
+  assert.equal(seekRange.status, 206);
+  assert.deepEqual(Buffer.from(await seekRange.arrayBuffer()), tinyWav.subarray(12, 20));
+  const invalidRange = await fetch(`${app.origin}${audio.publicPath}`, {
+    headers: { Range: "bytes=999-1000" },
+  });
+  assert.equal(invalidRange.status, 416);
+  assert.equal(invalidRange.headers.get("content-range"), `bytes */${tinyWav.length}`);
+
+  const listed = (await (await fetch(`${app.origin}/api/uploads`, { headers: { Cookie: cookie } })).json()).uploads;
+  assert.equal(listed.find((upload) => upload.id === audio.id).views, 1);
+
+  const audioOcr = await fetch(`${app.origin}/api/uploads/${audio.id}`, {
+    method: "PATCH",
+    headers: { Cookie: cookie, Origin: app.origin, "Content-Type": "application/json" },
+    body: JSON.stringify({ ocr: { text: "not allowed", tags: ["audio"] } }),
+  });
+  assert.equal(audioOcr.status, 400);
+
+  const videoResponse = await fetch(`${app.origin}/api/uploads`, {
+    method: "POST",
+    headers: {
+      Cookie: cookie,
+      Origin: app.origin,
+      "Content-Type": "video/mp4",
+      "X-File-Name": encodeURIComponent("small clip.mp4"),
+      "X-Media-Width": "1920",
+      "X-Media-Height": "1080",
+      "X-Media-Duration": "3.5",
+      "X-Upload-Visibility": "unlisted",
+    },
+    body: tinyMp4,
+  });
+  assert.equal(videoResponse.status, 201);
+  const video = (await videoResponse.json()).upload;
+  assert.equal(video.mediaKind, "video");
+  assert.equal(video.mime, "video/mp4");
+  assert.equal(video.extension, "mp4");
+  assert.equal(video.width, 1920);
+  assert.equal(video.height, 1080);
+  assert.equal(video.duration, 3.5);
+
+  const publicFeed = (await (await fetch(`${app.origin}/api/public/uploads`)).json()).uploads;
+  assert.equal(publicFeed.length, 1);
+  assert.equal(publicFeed[0].mediaKind, "audio");
+  assert.equal(publicFeed[0].duration, 2.25);
+  assert.equal(publicFeed[0].extension, "wav");
+});
+
 test("migrates legacy public and private metadata without losing records", async (context) => {
   const dataDir = await mkdtemp(path.join(tmpdir(), "sardrop-migration-test-"));
   context.after(() => rm(dataDir, { recursive: true, force: true }));
@@ -284,10 +393,12 @@ test("migrates legacy public and private metadata without losing records", async
   assert.equal(app.store.findById("public-id").views, 0);
 
   const migrated = JSON.parse(await readFile(path.join(dataDir, "metadata.json"), "utf8"));
-  assert.equal(migrated.version, 4);
+  assert.equal(migrated.version, 5);
   assert.equal(Object.hasOwn(migrated.uploads[0], "isPrivate"), false);
   assert.deepEqual(migrated.uploads[0].tags, []);
   assert.equal(migrated.uploads[0].ocrText, "");
   assert.equal(migrated.uploads[0].titleSource, "manual");
   assert.equal(migrated.uploads[0].aliasPath, null);
+  assert.equal(migrated.uploads[0].mediaKind, "image");
+  assert.equal(migrated.uploads[0].duration, null);
 });

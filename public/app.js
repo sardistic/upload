@@ -241,13 +241,13 @@ document.addEventListener("paste", (event) => {
   if (elements.app.classList.contains("hidden") || state.uploading) return;
   const target = event.target;
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable) return;
-  const images = [...(event.clipboardData?.items ?? [])]
-    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+  const files = [...(event.clipboardData?.items ?? [])]
+    .filter((item) => item.kind === "file" && isSupportedMediaType(item.type))
     .map((item) => item.getAsFile())
     .filter(Boolean);
-  if (!images.length) return;
+  if (!files.length) return;
   event.preventDefault();
-  uploadFiles(images);
+  uploadFiles(files);
 });
 
 for (const eventName of ["dragenter", "dragover"]) {
@@ -271,7 +271,7 @@ for (const eventName of ["dragleave", "drop"]) {
 
 document.addEventListener("drop", (event) => {
   if (elements.app.classList.contains("hidden") || state.uploading) return;
-  const files = [...(event.dataTransfer?.files ?? [])].filter((file) => file.type.startsWith("image/") || !file.type);
+  const files = [...(event.dataTransfer?.files ?? [])];
   if (files.length) uploadFiles(files);
 });
 
@@ -279,7 +279,7 @@ async function uploadFiles(files) {
   if (!files.length || state.uploading) return;
   const validFiles = files.filter((file) => {
     if (file.size > state.maxUploadBytes) {
-      toast(`${file.name || "That image"} is larger than ${formatBytes(state.maxUploadBytes)}`, true);
+      toast(`${file.name || "That file"} is larger than ${formatBytes(state.maxUploadBytes)}`, true);
       return false;
     }
     return true;
@@ -293,23 +293,22 @@ async function uploadFiles(files) {
 
   for (let index = 0; index < validFiles.length; index += 1) {
     const file = validFiles[index];
-    showQueue(file.name || "Pasted image", index + 1, validFiles.length);
+    showQueue(file.name || "Pasted file", index + 1, validFiles.length);
     try {
-      const dimensions = await getImageDimensions(file);
+      const metadata = await getMediaMetadata(file);
       const headers = {
         "Content-Type": file.type || "application/octet-stream",
-        "X-File-Name": encodeURIComponent(file.name || "pasted-image"),
+        "X-File-Name": encodeURIComponent(file.name || "pasted-file"),
         "X-Upload-Visibility": selectedVisibility("upload-visibility"),
       };
-      if (dimensions) {
-        headers["X-Image-Width"] = String(dimensions.width);
-        headers["X-Image-Height"] = String(dimensions.height);
-      }
+      if (metadata.width) headers["X-Media-Width"] = String(metadata.width);
+      if (metadata.height) headers["X-Media-Height"] = String(metadata.height);
+      if (metadata.duration) headers["X-Media-Duration"] = String(metadata.duration);
       const body = await request("/api/uploads", { method: "POST", headers, body: file });
       state.uploads.unshift(body.upload);
       uploaded.push({ upload: body.upload, file });
     } catch (error) {
-      toast(`${file.name || "Image"}: ${error.message}`, true);
+      toast(`${file.name || "File"}: ${error.message}`, true);
     }
   }
 
@@ -321,10 +320,12 @@ async function uploadFiles(files) {
 
   if (uploaded.length) {
     showLatest(uploaded.at(-1).upload);
-    toast(`${uploaded.length} ${uploaded.length === 1 ? "image" : "images"} uploaded`);
+    toast(`${uploaded.length} ${uploaded.length === 1 ? "file" : "files"} uploaded`);
     elements.latestResult.scrollIntoView({ behavior: "smooth", block: "nearest" });
     if (state.autoOcr) {
-      for (const item of uploaded) scanUpload(item.upload.id, item.file);
+      for (const item of uploaded) {
+        if (item.upload.mediaKind === "image") scanUpload(item.upload.id, item.file);
+      }
     }
   }
 }
@@ -342,15 +343,58 @@ function showQueue(name, current, total) {
   elements.uploadQueue.replaceChildren(wrapper);
 }
 
-async function getImageDimensions(file) {
-  if (!("createImageBitmap" in window)) return null;
+function mediaKindFromFile(file) {
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type.startsWith("video/")) return "video";
+  if (file.type.startsWith("audio/")) return "audio";
+  const extension = file.name.split(".").at(-1)?.toLowerCase();
+  if (["png", "jpg", "jpeg", "gif", "webp", "avif"].includes(extension)) return "image";
+  if (["mp4", "mov", "webm"].includes(extension)) return "video";
+  if (["mp3", "m4a", "ogg", "wav", "flac"].includes(extension)) return "audio";
+  return null;
+}
+
+function isSupportedMediaType(mime) {
+  return /^(?:image\/(?:png|jpeg|gif|webp|avif)|video\/(?:mp4|quicktime|webm)|audio\/(?:mpeg|mp4|x-m4a|ogg|wav|x-wav|flac|x-flac|webm))$/i.test(mime);
+}
+
+async function getMediaMetadata(file) {
+  const mediaKind = mediaKindFromFile(file);
+  if (mediaKind === "image") {
+    if (!("createImageBitmap" in window)) return {};
+    try {
+      const bitmap = await createImageBitmap(file);
+      const metadata = { width: bitmap.width, height: bitmap.height };
+      bitmap.close();
+      return metadata;
+    } catch {
+      return {};
+    }
+  }
+  if (mediaKind !== "video" && mediaKind !== "audio") return {};
+
+  const objectUrl = URL.createObjectURL(file);
+  const media = document.createElement(mediaKind);
+  media.preload = "metadata";
+  media.muted = true;
   try {
-    const bitmap = await createImageBitmap(file);
-    const dimensions = { width: bitmap.width, height: bitmap.height };
-    bitmap.close();
-    return dimensions;
-  } catch {
-    return null;
+    const loaded = new Promise((resolve) => {
+      const finish = () => resolve();
+      media.addEventListener("loadedmetadata", finish, { once: true });
+      media.addEventListener("error", finish, { once: true });
+      window.setTimeout(finish, 5000);
+    });
+    media.src = objectUrl;
+    await loaded;
+    return {
+      width: mediaKind === "video" ? media.videoWidth || null : null,
+      height: mediaKind === "video" ? media.videoHeight || null : null,
+      duration: Number.isFinite(media.duration) && media.duration > 0 ? media.duration : null,
+    };
+  } finally {
+    media.removeAttribute("src");
+    media.load();
+    URL.revokeObjectURL(objectUrl);
   }
 }
 
@@ -362,7 +406,7 @@ function showLatest(upload) {
   const label = elements.latestCopy.querySelector("span");
   label.textContent = upload.visibility === "private" ? "Private" : "Copy";
   elements.latestCopy.disabled = upload.visibility === "private";
-  elements.latestCopy.title = upload.visibility === "private" ? "Choose Public or Link only before sharing" : "Copy image URL";
+  elements.latestCopy.title = upload.visibility === "private" ? "Choose Public or Link only before sharing" : "Copy file URL";
   elements.latestResult.classList.remove("hidden");
 }
 
@@ -406,26 +450,70 @@ function renderPublicGallery() {
   elements.publicCount.textContent = `${String(uploads.length).padStart(2, "0")} ${uploads.length === 1 ? "object" : "objects"}`;
 }
 
+function makeMediaFrame(upload, className, ownerView = false) {
+  const mediaKind = upload.mediaKind ?? "image";
+  if (mediaKind === "image") {
+    const link = document.createElement("a");
+    link.className = className;
+    link.href = ownerView && upload.visibility === "private" ? upload.previewUrl : upload.url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.setAttribute("aria-label", `Open ${upload.title}`);
+
+    const image = document.createElement("img");
+    image.src = upload.previewUrl;
+    image.alt = upload.title;
+    image.loading = "lazy";
+    image.decoding = "async";
+    link.append(image);
+    return link;
+  }
+
+  const frame = document.createElement("div");
+  frame.className = `${className} media-frame media-frame--${mediaKind}`;
+  if (mediaKind === "video") {
+    const video = document.createElement("video");
+    video.src = upload.previewUrl;
+    video.controls = true;
+    video.preload = "metadata";
+    video.playsInline = true;
+    video.setAttribute("aria-label", upload.title);
+    frame.append(video);
+  } else {
+    const visual = document.createElement("div");
+    visual.className = "audio-visual";
+    const identity = document.createElement("span");
+    identity.className = "audio-identity";
+    const extension = document.createElement("strong");
+    extension.textContent = upload.extension?.toUpperCase() || "AUDIO";
+    const label = document.createElement("small");
+    label.textContent = upload.duration ? formatDuration(upload.duration) : "audio file";
+    identity.append(extension, label);
+    const waveform = document.createElement("span");
+    waveform.className = "audio-waveform";
+    waveform.setAttribute("aria-hidden", "true");
+    for (let index = 0; index < 24; index += 1) waveform.append(document.createElement("i"));
+    visual.append(identity, waveform);
+
+    const audio = document.createElement("audio");
+    audio.src = upload.previewUrl;
+    audio.controls = true;
+    audio.preload = "metadata";
+    audio.setAttribute("aria-label", upload.title);
+    frame.append(visual, audio);
+  }
+  return frame;
+}
+
 function makePublicCard(upload) {
   const card = document.createElement("article");
   card.className = "public-card";
 
-  const imageLink = document.createElement("a");
-  imageLink.className = "public-card__image";
-  imageLink.href = upload.url;
-  imageLink.target = "_blank";
-  imageLink.rel = "noopener";
-  imageLink.setAttribute("aria-label", `Open ${upload.title}`);
-
-  const image = document.createElement("img");
-  image.src = upload.previewUrl;
-  image.alt = upload.title;
-  image.loading = "lazy";
-  image.decoding = "async";
+  const mediaFrame = makeMediaFrame(upload, "public-card__image");
   const views = document.createElement("span");
   views.className = "view-pill";
   views.append(svgIcon("eye"), document.createTextNode(formatCount(upload.views)));
-  imageLink.append(image, views);
+  mediaFrame.append(views);
 
   const body = document.createElement("div");
   body.className = "public-card__body";
@@ -434,22 +522,21 @@ function makePublicCard(upload) {
   title.textContent = upload.title;
   title.title = upload.title;
   const metadata = document.createElement("small");
-  const dimensions = upload.width && upload.height ? ` · ${upload.width}×${upload.height}` : "";
-  metadata.textContent = `${relativeDate(upload.createdAt)}${dimensions}`;
+  metadata.textContent = `${relativeDate(upload.createdAt)}${mediaMetadataSuffix(upload)}`;
   text.append(title, metadata);
 
   const copy = document.createElement("button");
   copy.className = "icon-button public-card__copy";
   copy.type = "button";
-  copy.title = "Copy image URL";
+  copy.title = "Copy file URL";
   copy.setAttribute("aria-label", `Copy URL for ${upload.title}`);
   copy.append(svgIcon("copy"));
   copy.addEventListener("click", async () => {
     await copyText(upload.url);
-    toast("Public image URL copied");
+    toast("Public file URL copied");
   });
   body.append(text, copy);
-  card.append(imageLink, body);
+  card.append(mediaFrame, body);
   return card;
 }
 
@@ -468,7 +555,7 @@ function renderGallery() {
     elements.emptyTitle.textContent = hasQuery ? "No matching uploads" : "Nothing here yet";
     elements.emptyCopy.textContent = hasQuery
       ? "Try a different search or switch the visibility filter."
-      : "Paste a screenshot anywhere on this page to create your first link.";
+      : "Paste or drop a media file to create your first link.";
   }
 }
 
@@ -530,26 +617,15 @@ function makeTagUrlControl(upload) {
 
 function makeCard(upload) {
   const card = document.createElement("article");
-  card.className = "image-card";
+  card.className = "media-card";
   const visibility = visibilityDetails[upload.visibility];
 
-  const imageLink = document.createElement("a");
-  imageLink.className = "card-image";
-  imageLink.href = upload.visibility === "private" ? upload.previewUrl : upload.url;
-  imageLink.target = "_blank";
-  imageLink.rel = "noopener";
-  imageLink.setAttribute("aria-label", `Open ${upload.title}`);
-
-  const image = document.createElement("img");
-  image.src = upload.previewUrl;
-  image.alt = upload.title;
-  image.loading = "lazy";
-  image.decoding = "async";
+  const mediaFrame = makeMediaFrame(upload, "card-image", true);
 
   const badge = document.createElement("span");
   badge.className = `privacy-badge privacy-badge--${upload.visibility}`;
   badge.append(svgIcon(visibility.icon), document.createTextNode(visibility.label));
-  imageLink.append(image, badge);
+  mediaFrame.append(badge);
 
   const body = document.createElement("div");
   body.className = "card-body";
@@ -561,8 +637,7 @@ function makeCard(upload) {
   title.textContent = upload.title;
   title.title = upload.title;
   const metadata = document.createElement("p");
-  const dimensions = upload.width && upload.height ? ` · ${upload.width}×${upload.height}` : "";
-  metadata.textContent = `${relativeDate(upload.createdAt)} · ${formatBytes(upload.size)}${dimensions} · ${formatCount(upload.views)} ${upload.views === 1 ? "view" : "views"}`;
+  metadata.textContent = `${relativeDate(upload.createdAt)} · ${formatBytes(upload.size)}${mediaMetadataSuffix(upload)} · ${formatCount(upload.views)} ${upload.views === 1 ? "view" : "views"}`;
   titleBlock.append(title, metadata);
 
   const edit = document.createElement("button");
@@ -589,13 +664,18 @@ function makeCard(upload) {
       item.textContent = tag;
       tags.append(item);
     }
-  } else {
+  } else if ((upload.mediaKind ?? "image") === "image") {
     const status = document.createElement("span");
     status.className = `ocr-state${upload.ocrUpdatedAt ? " ocr-state--complete" : ""}`;
     status.textContent = completedOcrLabel(upload);
     if (upload.ocrUpdatedAt && upload.ocrConfidence !== null) {
       status.title = `OCR finished with ${upload.ocrConfidence}% recognition confidence`;
     }
+    tags.append(status);
+  } else {
+    const status = document.createElement("span");
+    status.className = "media-kind-state";
+    status.textContent = `${upload.mediaKind === "video" ? "Video" : "Audio"} · tags can be added manually`;
     tags.append(status);
   }
 
@@ -614,7 +694,7 @@ function makeCard(upload) {
   copy.title = upload.visibility === "private" ? "Choose Public or Link only before sharing" : "Copy direct URL";
   copy.addEventListener("click", async () => {
     await copyText(upload.url);
-    toast("Image URL copied");
+    toast("File URL copied");
   });
 
   const download = document.createElement("a");
@@ -623,23 +703,28 @@ function makeCard(upload) {
   download.download = upload.publicPath.slice(1);
   download.append(svgIcon("download"), document.createTextNode("Download"));
 
-  const scanLabel = job?.state === "running" ? "Working" : (job?.state === "error" ? "Retry" : (upload.ocrUpdatedAt ? "Rescan" : "Scan"));
-  const scan = makeAction("scan", scanLabel);
-  scan.disabled = Boolean(job && job.state === "running");
-  scan.title = "Extract searchable text and tags locally in this browser";
-  scan.addEventListener("click", () => scanUpload(upload.id));
-
   const remove = makeAction("trash", "");
   remove.classList.add("card-action--danger");
-  remove.title = "Delete image";
+  remove.title = "Delete file";
   remove.setAttribute("aria-label", `Delete ${upload.title}`);
   remove.addEventListener("click", () => openDelete(upload.id));
-  actions.append(copy, download, scan, remove);
+  actions.append(copy, download);
+  if ((upload.mediaKind ?? "image") === "image") {
+    const scanLabel = job?.state === "running" ? "Working" : (job?.state === "error" ? "Retry" : (upload.ocrUpdatedAt ? "Rescan" : "Scan"));
+    const scan = makeAction("scan", scanLabel);
+    scan.disabled = Boolean(job && job.state === "running");
+    scan.title = "Extract searchable text and tags locally in this browser";
+    scan.addEventListener("click", () => scanUpload(upload.id));
+    actions.append(scan);
+  } else {
+    actions.classList.add("card-actions--media");
+  }
+  actions.append(remove);
 
   body.append(titleRow, tags);
   if (tagUrlControl) body.append(tagUrlControl);
   body.append(urlLine, actions);
-  card.append(imageLink, body);
+  card.append(mediaFrame, body);
   return card;
 }
 
@@ -655,7 +740,7 @@ async function createTagUrl(id) {
     state.uploads = state.uploads.map((item) => item.id === id ? body.upload : item);
     render();
     if (body.upload.visibility === "private") {
-      toast("Tag URL created; it will work when the image is Link only or Public");
+      toast("Tag URL created; it will work when the file is Link only or Public");
     } else {
       await copyText(body.upload.aliasUrl);
       toast("Tag URL created and copied");
@@ -668,7 +753,7 @@ async function createTagUrl(id) {
 async function revokeTagUrl(id) {
   const upload = state.uploads.find((item) => item.id === id);
   if (!upload?.aliasUrl) return;
-  if (!window.confirm("Revoke this tag URL? The original image URL will keep working.")) return;
+  if (!window.confirm("Revoke this tag URL? The original file URL will keep working.")) return;
   try {
     const body = await request(`/api/uploads/${id}`, {
       method: "PATCH",
@@ -698,7 +783,9 @@ function openEdit(id) {
   state.editingId = id;
   elements.editTitle.value = upload.title;
   elements.editTags.value = (upload.tags ?? []).join(", ");
-  if (upload.ocrUpdatedAt) {
+  if ((upload.mediaKind ?? "image") !== "image") {
+    elements.editOcrDetail.textContent = "Local OCR is image-only. Manual titles and tags work for this file.";
+  } else if (upload.ocrUpdatedAt) {
     const confidence = upload.ocrConfidence === null ? "unknown confidence" : `${upload.ocrConfidence}% confidence`;
     const excerpt = upload.ocrText ? `\n${upload.ocrText.slice(0, 500)}` : "\nNo readable text found.";
     elements.editOcrDetail.textContent = `Local OCR · ${confidence}${excerpt}`;
@@ -745,7 +832,7 @@ elements.editForm.addEventListener("submit", async (event) => {
 
 async function scanUpload(id, source = null) {
   const original = state.uploads.find((item) => item.id === id);
-  if (!original || state.ocrJobs.get(id)?.state === "running") return;
+  if (!original || (original.mediaKind ?? "image") !== "image" || state.ocrJobs.get(id)?.state === "running") return;
   state.ocrJobs.delete(id);
 
   state.ocrJobs.set(id, { state: "running", label: "OCR queued" });
@@ -840,7 +927,7 @@ elements.deleteForm.addEventListener("submit", async (event) => {
     }
     render();
     elements.deleteDialog.close();
-    toast("Image permanently deleted");
+    toast("File permanently deleted");
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -890,6 +977,23 @@ function formatBytes(bytes) {
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   const value = bytes / (1024 ** index);
   return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
+
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  const rounded = Math.round(seconds);
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const remainder = rounded % 60;
+  return hours
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
+    : `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
+function mediaMetadataSuffix(upload) {
+  const dimensions = upload.width && upload.height ? ` · ${upload.width}×${upload.height}` : "";
+  const duration = upload.duration ? ` · ${formatDuration(upload.duration)}` : "";
+  return `${dimensions}${duration}`;
 }
 
 function relativeDate(value) {

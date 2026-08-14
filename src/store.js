@@ -14,7 +14,7 @@ export class UploadStore {
     this.dataDir = dataDir;
     this.imagesDir = path.join(dataDir, "images");
     this.metadataPath = path.join(dataDir, "metadata.json");
-    this.state = { version: 4, uploads: [] };
+    this.state = { version: 5, uploads: [] };
     this.mutationQueue = Promise.resolve();
   }
 
@@ -23,10 +23,10 @@ export class UploadStore {
 
     try {
       const stored = JSON.parse(await readFile(this.metadataPath, "utf8"));
-      if (![1, 2, 3, 4].includes(stored?.version) || !Array.isArray(stored.uploads)) {
+      if (![1, 2, 3, 4, 5].includes(stored?.version) || !Array.isArray(stored.uploads)) {
         throw new Error("Unsupported metadata format");
       }
-      const needsMigration = stored.version !== 4 || stored.uploads.some((upload) => (
+      const needsMigration = stored.version !== 5 || stored.uploads.some((upload) => (
         !["public", "unlisted", "private"].includes(upload.visibility)
         || !Number.isInteger(upload.views)
         || upload.views < 0
@@ -37,9 +37,11 @@ export class UploadStore {
         || !Object.hasOwn(upload, "ocrConfidence")
         || !Object.hasOwn(upload, "ocrUpdatedAt")
         || !Object.hasOwn(upload, "aliasPath")
+        || !["image", "video", "audio"].includes(upload.mediaKind)
+        || !Object.hasOwn(upload, "duration")
       ));
       this.state = {
-        version: 4,
+        version: 5,
         uploads: stored.uploads.map((upload) => {
           const { isPrivate, ...rest } = upload;
           return {
@@ -58,6 +60,12 @@ export class UploadStore {
               ? upload.titleSource
               : "manual",
             aliasPath: typeof upload.aliasPath === "string" ? upload.aliasPath : null,
+            mediaKind: ["image", "video", "audio"].includes(upload.mediaKind)
+              ? upload.mediaKind
+              : "image",
+            duration: Number.isFinite(upload.duration) && upload.duration > 0
+              ? upload.duration
+              : null,
           };
         }),
       };
@@ -88,20 +96,24 @@ export class UploadStore {
     ));
   }
 
-  imagePath(upload) {
+  mediaPath(upload) {
     return path.join(this.imagesDir, `${upload.id}.${upload.extension}`);
   }
 
-  async create(upload, imageBuffer) {
+  imagePath(upload) {
+    return this.mediaPath(upload);
+  }
+
+  async create(upload, mediaBuffer) {
     return this.mutate(async () => {
-      await writeFile(this.imagePath(upload), imageBuffer, { flag: "wx", mode: 0o600 });
+      await writeFile(this.mediaPath(upload), mediaBuffer, { flag: "wx", mode: 0o600 });
       this.state.uploads.push(upload);
 
       try {
         await this.persist();
       } catch (error) {
         this.state.uploads = this.state.uploads.filter((item) => item.id !== upload.id);
-        await rm(this.imagePath(upload), { force: true });
+        await rm(this.mediaPath(upload), { force: true });
         throw error;
       }
 
@@ -150,11 +162,11 @@ export class UploadStore {
       const upload = this.findById(id);
       if (!upload) return null;
 
-      const imagePath = this.imagePath(upload);
-      const stagedPath = `${imagePath}.deleting`;
+      const mediaPath = this.mediaPath(upload);
+      const stagedPath = `${mediaPath}.deleting`;
       const index = this.state.uploads.indexOf(upload);
       try {
-        await rename(imagePath, stagedPath);
+        await rename(mediaPath, stagedPath);
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
@@ -164,7 +176,7 @@ export class UploadStore {
       } catch (error) {
         this.state.uploads.splice(index, 0, upload);
         try {
-          await rename(stagedPath, imagePath);
+          await rename(stagedPath, mediaPath);
         } catch (restoreError) {
           if (restoreError.code !== "ENOENT") throw restoreError;
         }

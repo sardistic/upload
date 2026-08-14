@@ -403,7 +403,7 @@ function renderPublicGallery() {
   const uploads = state.publicUploads;
   elements.publicGallery.replaceChildren(...uploads.map(makePublicCard));
   elements.publicEmpty.classList.toggle("hidden", uploads.length > 0);
-  elements.publicCount.textContent = `${uploads.length} ${uploads.length === 1 ? "image" : "images"}`;
+  elements.publicCount.textContent = `${String(uploads.length).padStart(2, "0")} ${uploads.length === 1 ? "object" : "objects"}`;
 }
 
 function makePublicCard(upload) {

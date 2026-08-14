@@ -56,8 +56,12 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.match(homeHtml, /upload\.sardistic\.com/);
   assert.match(homeHtml, /<html lang="en" data-theme="dark">/);
   assert.match(homeHtml, /\/theme\.js\?v=5/);
-  assert.match(homeHtml, /\/app\.js\?v=7/);
+  assert.match(homeHtml, /\/styles\.css\?v=6/);
+  assert.match(homeHtml, /\/app\.js\?v=8/);
   assert.match(homeHtml, /Local OCR/);
+  assert.match(homeHtml, /public_objects/);
+  assert.doesNotMatch(homeHtml, /A small place/);
+  assert.doesNotMatch(homeHtml, /Browse the public index/);
   const themeScript = await fetch(`${app.origin}/theme.js?v=5`);
   assert.equal(themeScript.status, 200);
   assert.match(themeScript.headers.get("content-type"), /text\/javascript/);
@@ -65,7 +69,7 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   const ocrModule = await fetch(`${app.origin}/ocr.js?v=1`);
   assert.equal(ocrModule.status, 200);
   assert.match(await ocrModule.text(), /recognizeLocally/);
-  const appScript = await fetch(`${app.origin}/app.js?v=7`);
+  const appScript = await fetch(`${app.origin}/app.js?v=8`);
   assert.equal(appScript.status, 200);
   assert.match(await appScript.text(), /OCR complete · low confidence/);
   const tesseractScript = await fetch(`${app.origin}/vendor/tesseract/tesseract.min.js`);

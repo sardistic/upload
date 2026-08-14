@@ -35,3 +35,7 @@ The interface is a flat, dark-first archive rather than a marketing-style hero c
 An upload may have one optional secondary path derived from up to three owner-approved tags plus a random suffix. Creating the alias is an explicit owner action after OCR or manual tagging, because the readable URL inherently discloses those tags. The original randomized direct path remains stable and canonical; edits and rescans do not silently change an existing alias.
 
 The alias resolves to the same stored file, obeys the image's current Public/Link-only/Private state, and increments the same view counter. It can be revoked without deleting the image. Alias paths are stored in metadata version 4 and share the existing global path-collision check with canonical paths.
+
+## 2026-08-13 — Public index without a marketing hero
+
+The anonymous page begins with a compact object manifest rather than a conventional headline, explanatory subtitle, and scroll call-to-action. Host, ordering, surface mode, object count, and the three visibility rules are expressed as terse read-only index metadata, with the contact sheet immediately following. This keeps the public surface product-like and specific to image infrastructure instead of resembling a generic landing page.

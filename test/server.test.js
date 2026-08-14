@@ -56,6 +56,7 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.match(homeHtml, /upload\.sardistic\.com/);
   assert.match(homeHtml, /<html lang="en" data-theme="dark">/);
   assert.match(homeHtml, /\/theme\.js\?v=5/);
+  assert.match(homeHtml, /\/app\.js\?v=6/);
   assert.match(homeHtml, /Local OCR/);
   const themeScript = await fetch(`${app.origin}/theme.js?v=5`);
   assert.equal(themeScript.status, 200);
@@ -64,6 +65,9 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   const ocrModule = await fetch(`${app.origin}/ocr.js?v=1`);
   assert.equal(ocrModule.status, 200);
   assert.match(await ocrModule.text(), /recognizeLocally/);
+  const appScript = await fetch(`${app.origin}/app.js?v=6`);
+  assert.equal(appScript.status, 200);
+  assert.match(await appScript.text(), /OCR complete · low confidence/);
   const tesseractScript = await fetch(`${app.origin}/vendor/tesseract/tesseract.min.js`);
   assert.equal(tesseractScript.status, 200);
   assert.match(tesseractScript.headers.get("cache-control"), /immutable/);

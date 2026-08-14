@@ -470,6 +470,15 @@ function renderGallery() {
   }
 }
 
+function completedOcrLabel(upload) {
+  if (!upload.ocrUpdatedAt) return "Not scanned";
+  if (!upload.ocrText) return "OCR complete · no readable text";
+  if (upload.ocrConfidence === null) return "OCR complete";
+  if (upload.ocrConfidence >= 70) return "OCR complete · high confidence";
+  if (upload.ocrConfidence >= 45) return "OCR complete · review suggested";
+  return "OCR complete · low confidence";
+}
+
 function makeCard(upload) {
   const card = document.createElement("article");
   card.className = "image-card";
@@ -534,9 +543,10 @@ function makeCard(upload) {
   } else {
     const status = document.createElement("span");
     status.className = `ocr-state${upload.ocrUpdatedAt ? " ocr-state--complete" : ""}`;
-    status.textContent = upload.ocrUpdatedAt
-      ? (upload.ocrText ? `Text indexed · ${upload.ocrConfidence ?? 0}%` : "Scanned · no text")
-      : "Not scanned";
+    status.textContent = completedOcrLabel(upload);
+    if (upload.ocrUpdatedAt && upload.ocrConfidence !== null) {
+      status.title = `OCR finished with ${upload.ocrConfidence}% recognition confidence`;
+    }
     tags.append(status);
   }
 

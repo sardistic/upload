@@ -17,6 +17,8 @@ const staticFiles = new Map([
   ["/theme.js", [path.join(publicDirectory, "theme.js"), "text/javascript; charset=utf-8", false]],
   ["/styles.css", [path.join(publicDirectory, "styles.css"), "text/css; charset=utf-8", false]],
   ["/favicon.svg", [path.join(publicDirectory, "favicon.svg"), "image/svg+xml", false]],
+  ["/apple-touch-icon.png", [path.join(publicDirectory, "apple-touch-icon.png"), "image/png", false]],
+  ["/icon-maskable.png", [path.join(publicDirectory, "icon-maskable.png"), "image/png", false]],
   ["/site.webmanifest", [path.join(publicDirectory, "site.webmanifest"), "application/manifest+json", false]],
   ["/vendor/tesseract/tesseract.min.js", [path.join(dependencyDirectory, "tesseract.js", "dist", "tesseract.min.js"), "text/javascript; charset=utf-8", true]],
   ["/vendor/tesseract/worker.min.js", [path.join(dependencyDirectory, "tesseract.js", "dist", "worker.min.js"), "text/javascript; charset=utf-8", true]],

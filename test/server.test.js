@@ -89,6 +89,21 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.match(await themeScript.text(), /upload-sardistic-theme/);
   // Guards the Rocket Loader replayed-DOMContentLoaded double-bind that made the toggle inert.
   assert.match(await (await fetch(`${app.origin}/theme.js`)).text(), /themeBound/);
+  assert.match(homeHtml, /rel="apple-touch-icon"/);
+  const favicon = await fetch(`${app.origin}/favicon.svg?v=2`);
+  assert.equal(favicon.status, 200);
+  assert.match(favicon.headers.get("content-type"), /image\/svg\+xml/);
+  for (const [iconPath, signatureLength] of [["/apple-touch-icon.png", 180], ["/icon-maskable.png", 192]]) {
+    const icon = await fetch(`${app.origin}${iconPath}?v=2`);
+    assert.equal(icon.status, 200, `${iconPath} should be served`);
+    assert.equal(icon.headers.get("content-type"), "image/png");
+    const bytes = new Uint8Array(await icon.arrayBuffer());
+    // PNG magic number, so a text-mangled or truncated binary fails loudly.
+    assert.deepEqual([...bytes.slice(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10], `${iconPath} should be a real PNG`);
+    // IHDR width is a big-endian uint32 at byte 16.
+    const width = new DataView(bytes.buffer).getUint32(16);
+    assert.equal(width, signatureLength, `${iconPath} should be ${signatureLength}px wide`);
+  }
   const ocrModule = await fetch(`${app.origin}/ocr.js?v=1`);
   assert.equal(ocrModule.status, 200);
   assert.match(await ocrModule.text(), /recognizeLocally/);

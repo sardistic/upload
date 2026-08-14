@@ -1,12 +1,14 @@
 {
   "name": "upload.sardistic.com",
   "short_name": "Sardistic Upload",
-  "description": "Paste-to-image URLs on upload.sardistic.com",
+  "description": "Paste-to-media URLs on upload.sardistic.com",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0d0e12",
   "theme_color": "#0d0e12",
   "icons": [
-    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+    { "src": "/favicon.svg?v=2", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/apple-touch-icon.png?v=2", "sizes": "180x180", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable.png?v=2", "sizes": "192x192", "type": "image/png", "purpose": "maskable" }
   ]
 }

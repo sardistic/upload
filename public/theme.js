@@ -37,14 +37,24 @@
     }
   }
 
-  applyTheme(storedTheme());
-
-  document.addEventListener("DOMContentLoaded", () => {
+  // Script injectors such as Cloudflare Rocket Loader replay DOMContentLoaded, so binding
+  // must be idempotent; a control bound twice toggles twice per click and appears dead.
+  function bindControls() {
     updateControls(root.dataset.theme);
     for (const control of document.querySelectorAll(".theme-toggle")) {
+      if (control.dataset.themeBound === "true") continue;
+      control.dataset.themeBound = "true";
       control.addEventListener("click", () => {
         applyTheme(root.dataset.theme === "dark" ? "light" : "dark", true);
       });
     }
-  });
+  }
+
+  applyTheme(storedTheme());
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bindControls);
+  } else {
+    bindControls();
+  }
 })();

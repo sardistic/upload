@@ -47,3 +47,11 @@ The upload store accepts a deliberately small set of browser-oriented image, vid
 All media uses the existing canonical/alias paths and Public/Link-only/Private rules. File responses advertise byte ranges and return a single requested range with `206`, which makes browser playback and seeking reliable. A full direct GET or a range beginning at byte zero increments the shared view count; later seek ranges, HEAD requests, owner previews, and public-index previews do not. This avoids treating one playback session as many views.
 
 Browser-local OCR remains image-only. Audio and video still support manual titles, tags, tag-derived aliases, search, visibility changes, downloads, and deletion. The default per-file limit is 50 MB, within the existing 100 MB configuration ceiling and the single-process in-memory upload architecture.
+
+## 2026-08-13 — Injector-tolerant theme binding
+
+The theme control binds idempotently: each `.theme-toggle` is marked with a `data-theme-bound` attribute before its click listener is attached, and binding runs immediately when the document has already finished parsing instead of relying only on `DOMContentLoaded`.
+
+This is required because the edge in front of this service runs Cloudflare Rocket Loader, which replaces `document.addEventListener` and replays `DOMContentLoaded` after its own script pass. `data-cfasync="false"` keeps `theme.js` from being deferred but does not exempt it from that replay, so the previous one-shot binding attached two listeners per control. A single click then applied the theme twice and returned to the starting value, making the toggle look inert in production while working locally. Idempotent binding fixes the behavior at the application level regardless of whether Rocket Loader is later disabled at the edge.
+
+The public index header drops the decorative `online` status pill. The surface is a read-only object index; a liveness dot that is hardcoded rather than derived from any health signal asserts something the page does not actually measure.

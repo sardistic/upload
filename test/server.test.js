@@ -75,17 +75,20 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   const homeHtml = await home.text();
   assert.match(homeHtml, /upload\.sardistic\.com/);
   assert.match(homeHtml, /<html lang="en" data-theme="dark">/);
-  assert.match(homeHtml, /\/theme\.js\?v=5/);
-  assert.match(homeHtml, /\/styles\.css\?v=7/);
+  assert.match(homeHtml, /\/theme\.js\?v=6/);
+  assert.match(homeHtml, /\/styles\.css\?v=8/);
   assert.match(homeHtml, /\/app\.js\?v=9/);
   assert.match(homeHtml, /Local OCR/);
   assert.match(homeHtml, /public_objects/);
   assert.doesNotMatch(homeHtml, /A small place/);
   assert.doesNotMatch(homeHtml, /Browse the public index/);
-  const themeScript = await fetch(`${app.origin}/theme.js?v=5`);
+  assert.doesNotMatch(homeHtml, /manifest-live/);
+  const themeScript = await fetch(`${app.origin}/theme.js?v=6`);
   assert.equal(themeScript.status, 200);
   assert.match(themeScript.headers.get("content-type"), /text\/javascript/);
   assert.match(await themeScript.text(), /upload-sardistic-theme/);
+  // Guards the Rocket Loader replayed-DOMContentLoaded double-bind that made the toggle inert.
+  assert.match(await (await fetch(`${app.origin}/theme.js`)).text(), /themeBound/);
   const ocrModule = await fetch(`${app.origin}/ocr.js?v=1`);
   assert.equal(ocrModule.status, 200);
   assert.match(await ocrModule.text(), /recognizeLocally/);

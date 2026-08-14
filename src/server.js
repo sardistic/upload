@@ -289,6 +289,13 @@ function cleanConfidence(value) {
   return Number.isFinite(confidence) ? Math.max(0, Math.min(100, Math.round(confidence))) : null;
 }
 
+function makeTagAlias(tags, extension) {
+  const base = cleanTags(tags).slice(0, 3).join("-").slice(0, 72).replace(/-+$/g, "");
+  if (!base) return null;
+  const suffix = randomBytes(4).toString("base64url").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5).padEnd(5, "x");
+  return `/${base}-${suffix}.${extension}`;
+}
+
 function makeSlug() {
   const adjective = adjectives[randomBytes(1)[0] % adjectives.length];
   const noun = nouns[randomBytes(1)[0] % nouns.length];
@@ -303,6 +310,8 @@ function serializeUpload(upload, config) {
     originalName: upload.originalName,
     publicPath: upload.publicPath,
     url: `${config.baseUrl}${upload.publicPath}`,
+    aliasPath: upload.aliasPath ?? null,
+    aliasUrl: upload.aliasPath ? `${config.baseUrl}${upload.aliasPath}` : null,
     previewUrl: `/api/uploads/${upload.id}/content`,
     mime: upload.mime,
     extension: upload.extension,
@@ -327,6 +336,7 @@ function serializePublicUpload(upload, config) {
     title: upload.title,
     publicPath: upload.publicPath,
     url: `${config.baseUrl}${upload.publicPath}`,
+    aliasUrl: upload.aliasPath ? `${config.baseUrl}${upload.aliasPath}` : null,
     previewUrl: `/api/public/uploads/${upload.id}/content`,
     mime: upload.mime,
     size: upload.size,
@@ -484,6 +494,7 @@ export async function createSardropServer(overrides = {}) {
           ocrConfidence: null,
           ocrUpdatedAt: null,
           titleSource: "filename",
+          aliasPath: null,
           createdAt: now,
           updatedAt: now,
         };
@@ -536,6 +547,24 @@ export async function createSardropServer(overrides = {}) {
           if (body.ocr.applyTitle && suggestedTitle && ["filename", "ocr"].includes(existingUpload.titleSource)) {
             changes.title = suggestedTitle;
             changes.titleSource = "ocr";
+          }
+        }
+        if (Object.hasOwn(body, "tagAlias")) {
+          if (body.tagAlias === true) {
+            if (!existingUpload.tags?.length) {
+              return sendJson(response, 400, { error: "Add at least one tag before creating a tag URL" });
+            }
+            if (!existingUpload.aliasPath) {
+              let aliasPath;
+              do {
+                aliasPath = makeTagAlias(existingUpload.tags, existingUpload.extension);
+              } while (aliasPath && store.hasPath(aliasPath));
+              changes.aliasPath = aliasPath;
+            }
+          } else if (body.tagAlias === false) {
+            changes.aliasPath = null;
+          } else {
+            return sendJson(response, 400, { error: "Invalid tag URL setting" });
           }
         }
         if (!Object.keys(changes).length) return sendJson(response, 400, { error: "No supported changes provided" });

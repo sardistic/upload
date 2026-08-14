@@ -74,6 +74,8 @@ const iconPaths = {
   lock: '<rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/>',
   scan: '<path d="M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M8 21H4a1 1 0 0 1-1-1v-4m13 5h4a1 1 0 0 0 1-1v-4M7 9h10M7 12h8M7 15h10"/>',
+  tag: '<path d="M20 13 13 20l-9-9V4h7l9 9Z"/><circle cx="8.5" cy="8.5" r="1.5"/>',
+  close: '<path d="m7 7 10 10M17 7 7 17"/>',
 };
 
 const visibilityDetails = {
@@ -454,7 +456,7 @@ function makePublicCard(upload) {
 function renderGallery() {
   const uploads = state.uploads.filter((upload) => {
     const visibilityMatch = state.filter === "all" || upload.visibility === state.filter;
-    const searchMatch = !state.search || `${upload.title} ${upload.originalName} ${upload.publicPath} ${(upload.tags ?? []).join(" ")} ${upload.ocrText ?? ""}`.toLowerCase().includes(state.search);
+    const searchMatch = !state.search || `${upload.title} ${upload.originalName} ${upload.publicPath} ${upload.aliasPath ?? ""} ${(upload.tags ?? []).join(" ")} ${upload.ocrText ?? ""}`.toLowerCase().includes(state.search);
     return visibilityMatch && searchMatch;
   });
 
@@ -477,6 +479,53 @@ function completedOcrLabel(upload) {
   if (upload.ocrConfidence >= 70) return "OCR complete · high confidence";
   if (upload.ocrConfidence >= 45) return "OCR complete · review suggested";
   return "OCR complete · low confidence";
+}
+
+function makeTagUrlControl(upload) {
+  if (!upload.aliasUrl && !(upload.tags ?? []).length) return null;
+
+  if (!upload.aliasUrl) {
+    const create = document.createElement("button");
+    create.className = "tag-url-offer";
+    create.type = "button";
+    create.title = "Create an additional readable URL from the first three tags";
+    create.append(svgIcon("tag"), document.createTextNode("Make tag URL"));
+    create.addEventListener("click", async () => {
+      create.disabled = true;
+      await createTagUrl(upload.id);
+      create.disabled = false;
+    });
+    return create;
+  }
+
+  const row = document.createElement("div");
+  row.className = "card-url card-url--alias";
+  row.append(svgIcon("tag"));
+  const text = document.createElement("span");
+  text.textContent = upload.aliasUrl.replace(/^https?:\/\//, "");
+  row.append(text);
+
+  const copy = document.createElement("button");
+  copy.className = "card-url__action";
+  copy.type = "button";
+  copy.disabled = upload.visibility === "private";
+  copy.title = upload.visibility === "private" ? "Tag URL is disabled while private" : "Copy tag URL";
+  copy.setAttribute("aria-label", `Copy tag URL for ${upload.title}`);
+  copy.append(svgIcon("copy"));
+  copy.addEventListener("click", async () => {
+    await copyText(upload.aliasUrl);
+    toast("Tag URL copied");
+  });
+
+  const revoke = document.createElement("button");
+  revoke.className = "card-url__action card-url__action--danger";
+  revoke.type = "button";
+  revoke.title = "Revoke tag URL";
+  revoke.setAttribute("aria-label", `Revoke tag URL for ${upload.title}`);
+  revoke.append(svgIcon("close"));
+  revoke.addEventListener("click", () => revokeTagUrl(upload.id));
+  row.append(copy, revoke);
+  return row;
 }
 
 function makeCard(upload) {
@@ -556,6 +605,7 @@ function makeCard(upload) {
   const urlText = document.createElement("span");
   urlText.textContent = upload.visibility === "private" ? "Direct URL disabled while private" : upload.url.replace(/^https?:\/\//, "");
   urlLine.append(urlText);
+  const tagUrlControl = makeTagUrlControl(upload);
 
   const actions = document.createElement("div");
   actions.className = "card-actions";
@@ -586,9 +636,51 @@ function makeCard(upload) {
   remove.addEventListener("click", () => openDelete(upload.id));
   actions.append(copy, download, scan, remove);
 
-  body.append(titleRow, tags, urlLine, actions);
+  body.append(titleRow, tags);
+  if (tagUrlControl) body.append(tagUrlControl);
+  body.append(urlLine, actions);
   card.append(imageLink, body);
   return card;
+}
+
+async function createTagUrl(id) {
+  const upload = state.uploads.find((item) => item.id === id);
+  if (!upload) return;
+  try {
+    const body = await request(`/api/uploads/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tagAlias: true }),
+    });
+    state.uploads = state.uploads.map((item) => item.id === id ? body.upload : item);
+    render();
+    if (body.upload.visibility === "private") {
+      toast("Tag URL created; it will work when the image is Link only or Public");
+    } else {
+      await copyText(body.upload.aliasUrl);
+      toast("Tag URL created and copied");
+    }
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function revokeTagUrl(id) {
+  const upload = state.uploads.find((item) => item.id === id);
+  if (!upload?.aliasUrl) return;
+  if (!window.confirm("Revoke this tag URL? The original image URL will keep working.")) return;
+  try {
+    const body = await request(`/api/uploads/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tagAlias: false }),
+    });
+    state.uploads = state.uploads.map((item) => item.id === id ? body.upload : item);
+    render();
+    toast("Tag URL revoked; original URL unchanged");
+  } catch (error) {
+    toast(error.message, true);
+  }
 }
 
 function makeAction(icon, label) {

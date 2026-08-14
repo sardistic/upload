@@ -56,7 +56,7 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.match(homeHtml, /upload\.sardistic\.com/);
   assert.match(homeHtml, /<html lang="en" data-theme="dark">/);
   assert.match(homeHtml, /\/theme\.js\?v=5/);
-  assert.match(homeHtml, /\/app\.js\?v=6/);
+  assert.match(homeHtml, /\/app\.js\?v=7/);
   assert.match(homeHtml, /Local OCR/);
   const themeScript = await fetch(`${app.origin}/theme.js?v=5`);
   assert.equal(themeScript.status, 200);
@@ -65,7 +65,7 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   const ocrModule = await fetch(`${app.origin}/ocr.js?v=1`);
   assert.equal(ocrModule.status, 200);
   assert.match(await ocrModule.text(), /recognizeLocally/);
-  const appScript = await fetch(`${app.origin}/app.js?v=6`);
+  const appScript = await fetch(`${app.origin}/app.js?v=7`);
   assert.equal(appScript.status, 200);
   assert.match(await appScript.text(), /OCR complete · low confidence/);
   const tesseractScript = await fetch(`${app.origin}/vendor/tesseract/tesseract.min.js`);
@@ -107,7 +107,16 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.equal(upload.ocrText, "");
   assert.equal(upload.ocrUpdatedAt, null);
   assert.equal(upload.titleSource, "filename");
+  assert.equal(upload.aliasPath, null);
+  assert.equal(upload.aliasUrl, null);
   assert.match(upload.publicPath, /^\/[a-z]+-[a-z]+-[a-z0-9]{6}\.png$/);
+
+  const emptyTagAlias = await fetch(`${app.origin}/api/uploads/${upload.id}`, {
+    method: "PATCH",
+    headers: { Cookie: cookie, Origin: app.origin, "Content-Type": "application/json" },
+    body: JSON.stringify({ tagAlias: true }),
+  });
+  assert.equal(emptyTagAlias.status, 400);
 
   const ocrResponse = await fetch(`${app.origin}/api/uploads/${upload.id}`, {
     method: "PATCH",
@@ -128,11 +137,22 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.deepEqual(ocrUpload.tags, ["receipt", "quarterly", "total"]);
   assert.match(ocrUpload.ocrText, /Total due/);
 
+  const aliasResponse = await fetch(`${app.origin}/api/uploads/${upload.id}`, {
+    method: "PATCH",
+    headers: { Cookie: cookie, Origin: app.origin, "Content-Type": "application/json" },
+    body: JSON.stringify({ tagAlias: true }),
+  });
+  assert.equal(aliasResponse.status, 200);
+  const aliasUpload = (await aliasResponse.json()).upload;
+  assert.match(aliasUpload.aliasPath, /^\/receipt-quarterly-total-[a-z0-9]{5}\.png$/);
+  assert.equal(aliasUpload.aliasUrl, `http://sardrop.test${aliasUpload.aliasPath}`);
+
   const publicFeed = await fetch(`${app.origin}/api/public/uploads`);
   const publicUploads = (await publicFeed.json()).uploads;
   assert.equal(publicUploads.length, 1);
   assert.equal(publicUploads[0].id, upload.id);
   assert.equal(publicUploads[0].views, 0);
+  assert.equal(publicUploads[0].aliasUrl, aliasUpload.aliasUrl);
   assert.equal(Object.hasOwn(publicUploads[0], "originalName"), false);
   assert.equal(Object.hasOwn(publicUploads[0], "ocrText"), false);
   assert.equal(Object.hasOwn(publicUploads[0], "tags"), false);
@@ -141,6 +161,8 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.equal(publicPreview.status, 200);
   const headImage = await fetch(`${app.origin}${upload.publicPath}`, { method: "HEAD" });
   assert.equal(headImage.status, 200);
+  const headAlias = await fetch(`${app.origin}${aliasUpload.aliasPath}`, { method: "HEAD" });
+  assert.equal(headAlias.status, 200);
 
   const publicImage = await fetch(`${app.origin}${upload.publicPath}`);
   assert.equal(publicImage.status, 200);
@@ -159,7 +181,9 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.equal(unlistedResponse.status, 200);
   assert.equal((await unlistedResponse.json()).upload.visibility, "unlisted");
   assert.deepEqual((await (await fetch(`${app.origin}/api/public/uploads`)).json()).uploads, []);
-  assert.equal((await fetch(`${app.origin}${upload.publicPath}`)).status, 200);
+  const unlistedAlias = await fetch(`${app.origin}${aliasUpload.aliasPath}`);
+  assert.equal(unlistedAlias.status, 200);
+  assert.deepEqual(Buffer.from(await unlistedAlias.arrayBuffer()), onePixelPng);
 
   const privateResponse = await fetch(`${app.origin}/api/uploads/${upload.id}`, {
     method: "PATCH",
@@ -172,6 +196,7 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.equal(privateUpload.visibility, "private");
   assert.equal(privateUpload.views, 2);
   assert.equal((await fetch(`${app.origin}${upload.publicPath}`)).status, 404);
+  assert.equal((await fetch(`${app.origin}${aliasUpload.aliasPath}`)).status, 404);
 
   const privatePreview = await fetch(`${app.origin}/api/uploads/${upload.id}/content`, {
     headers: { Cookie: cookie },
@@ -192,6 +217,17 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.equal(uploads[0].views, 2);
   assert.match(uploads[0].ocrText, /Quarterly receipt/);
   assert.deepEqual(uploads[0].tags, ["receipt", "quarterly", "total"]);
+  assert.equal(uploads[0].aliasPath, aliasUpload.aliasPath);
+  assert.equal(uploads[0].aliasUrl, aliasUpload.aliasUrl);
+
+  const revokeAlias = await fetch(`${app.origin}/api/uploads/${upload.id}`, {
+    method: "PATCH",
+    headers: { Cookie: restartedCookie, Origin: app.origin, "Content-Type": "application/json" },
+    body: JSON.stringify({ tagAlias: false }),
+  });
+  assert.equal(revokeAlias.status, 200);
+  assert.equal((await revokeAlias.json()).upload.aliasUrl, null);
+  assert.equal(app.store.findByPath(aliasUpload.aliasPath), null);
 
   const deleteResponse = await fetch(`${app.origin}/api/uploads/${upload.id}`, {
     method: "DELETE",
@@ -244,9 +280,10 @@ test("migrates legacy public and private metadata without losing records", async
   assert.equal(app.store.findById("public-id").views, 0);
 
   const migrated = JSON.parse(await readFile(path.join(dataDir, "metadata.json"), "utf8"));
-  assert.equal(migrated.version, 3);
+  assert.equal(migrated.version, 4);
   assert.equal(Object.hasOwn(migrated.uploads[0], "isPrivate"), false);
   assert.deepEqual(migrated.uploads[0].tags, []);
   assert.equal(migrated.uploads[0].ocrText, "");
   assert.equal(migrated.uploads[0].titleSource, "manual");
+  assert.equal(migrated.uploads[0].aliasPath, null);
 });

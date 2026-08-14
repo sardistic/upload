@@ -14,7 +14,7 @@ export class UploadStore {
     this.dataDir = dataDir;
     this.imagesDir = path.join(dataDir, "images");
     this.metadataPath = path.join(dataDir, "metadata.json");
-    this.state = { version: 3, uploads: [] };
+    this.state = { version: 4, uploads: [] };
     this.mutationQueue = Promise.resolve();
   }
 
@@ -23,10 +23,10 @@ export class UploadStore {
 
     try {
       const stored = JSON.parse(await readFile(this.metadataPath, "utf8"));
-      if (![1, 2, 3].includes(stored?.version) || !Array.isArray(stored.uploads)) {
+      if (![1, 2, 3, 4].includes(stored?.version) || !Array.isArray(stored.uploads)) {
         throw new Error("Unsupported metadata format");
       }
-      const needsMigration = stored.version !== 3 || stored.uploads.some((upload) => (
+      const needsMigration = stored.version !== 4 || stored.uploads.some((upload) => (
         !["public", "unlisted", "private"].includes(upload.visibility)
         || !Number.isInteger(upload.views)
         || upload.views < 0
@@ -36,9 +36,10 @@ export class UploadStore {
         || !["filename", "ocr", "manual"].includes(upload.titleSource)
         || !Object.hasOwn(upload, "ocrConfidence")
         || !Object.hasOwn(upload, "ocrUpdatedAt")
+        || !Object.hasOwn(upload, "aliasPath")
       ));
       this.state = {
-        version: 3,
+        version: 4,
         uploads: stored.uploads.map((upload) => {
           const { isPrivate, ...rest } = upload;
           return {
@@ -56,6 +57,7 @@ export class UploadStore {
             titleSource: ["filename", "ocr", "manual"].includes(upload.titleSource)
               ? upload.titleSource
               : "manual",
+            aliasPath: typeof upload.aliasPath === "string" ? upload.aliasPath : null,
           };
         }),
       };
@@ -75,11 +77,15 @@ export class UploadStore {
   }
 
   findByPath(publicPath) {
-    return this.state.uploads.find((upload) => upload.publicPath === publicPath) ?? null;
+    return this.state.uploads.find((upload) => (
+      upload.publicPath === publicPath || upload.aliasPath === publicPath
+    )) ?? null;
   }
 
   hasPath(publicPath) {
-    return this.state.uploads.some((upload) => upload.publicPath === publicPath);
+    return this.state.uploads.some((upload) => (
+      upload.publicPath === publicPath || upload.aliasPath === publicPath
+    ));
   }
 
   imagePath(upload) {

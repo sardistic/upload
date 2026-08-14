@@ -29,3 +29,9 @@ OCR uses pinned, self-hosted Tesseract.js assets and the English trained-data pa
 Extracted text, confidence, and normalized tags are stored in metadata version 3 and returned only by the authenticated owner API. The anonymous public feed intentionally omits all OCR fields, even for Public images. OCR can name uploads whose title still comes from a generic filename, but a manual title becomes authoritative and is not overwritten by later rescans. Existing version 1 and 2 records migrate atomically with empty OCR metadata and manual title provenance.
 
 The interface is a flat, dark-first archive rather than a marketing-style hero composition. The splash gives the public index priority and keeps owner login behind the existing minimal header control; the authenticated view keeps upload, visibility, OCR, search, and management controls in a compact workbench.
+
+## 2026-08-13 — Optional tag-derived URL aliases
+
+An upload may have one optional secondary path derived from up to three owner-approved tags plus a random suffix. Creating the alias is an explicit owner action after OCR or manual tagging, because the readable URL inherently discloses those tags. The original randomized direct path remains stable and canonical; edits and rescans do not silently change an existing alias.
+
+The alias resolves to the same stored file, obeys the image's current Public/Link-only/Private state, and increments the same view counter. It can be revoked without deleting the image. Alias paths are stored in metadata version 4 and share the existing global path-collision check with canonical paths.

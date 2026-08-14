@@ -16,6 +16,8 @@ Direct image GET requests increment the view count. Owner and public-gallery thu
 
 Local OCR is enabled by default for new uploads. Tesseract.js and its English model are served by this app, run in the owner's browser, and process one downscaled image at a time. Extracted text and tags are saved as owner-only metadata and are never included in the anonymous public API. Generic screenshot filenames can be replaced with a high-confidence first line; manually edited titles are never overwritten by later scans.
 
+After tags exist, the owner can optionally create a second readable URL derived from up to three tags plus a short collision-resistant suffix. The original randomized URL remains unchanged. The tag URL follows the same visibility and view-count rules and can be revoked independently without deleting the image.
+
 ## Run locally
 
 Sardrop requires Node.js 20 or newer. Install the pinned browser OCR assets before starting it:
@@ -41,7 +43,7 @@ Open `http://localhost:3000`. Upload files and metadata are written beneath `./d
 | `MAX_UPLOAD_MB` | no | `25` | Per-image limit, from 1–100 MB |
 | `SESSION_DAYS` | no | `30` | Owner session lifetime |
 
-Never commit the real `.env`. Back up the complete data directory; image files and `metadata.json` are both required for a full restore. Version 1 and 2 metadata is migrated automatically to version 3: legacy visibility and view data is preserved while owner-only OCR fields are initialized safely.
+Never commit the real `.env`. Back up the complete data directory; image files and `metadata.json` are both required for a full restore. Metadata versions 1–3 migrate automatically to version 4: legacy visibility, views, and OCR data are preserved while the optional tag-URL field is initialized safely.
 
 ## Docker
 

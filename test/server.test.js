@@ -74,6 +74,7 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.match(home.headers.get("content-security-policy"), /wasm-unsafe-eval/);
   const homeHtml = await home.text();
   assert.match(homeHtml, /upload\.sardistic\.com/);
+  assert.match(homeHtml, /<title>Uploads \| Sardistic<\/title>/);
   assert.match(homeHtml, /<html lang="en" data-theme="dark">/);
   assert.match(homeHtml, /\/theme\.js\?v=6/);
   assert.match(homeHtml, /\/styles\.css\?v=8/);
@@ -90,11 +91,11 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   // Guards the Rocket Loader replayed-DOMContentLoaded double-bind that made the toggle inert.
   assert.match(await (await fetch(`${app.origin}/theme.js`)).text(), /themeBound/);
   assert.match(homeHtml, /rel="apple-touch-icon"/);
-  const favicon = await fetch(`${app.origin}/favicon.svg?v=2`);
+  const favicon = await fetch(`${app.origin}/favicon.svg?v=3`);
   assert.equal(favicon.status, 200);
   assert.match(favicon.headers.get("content-type"), /image\/svg\+xml/);
   for (const [iconPath, signatureLength] of [["/apple-touch-icon.png", 180], ["/icon-maskable.png", 192]]) {
-    const icon = await fetch(`${app.origin}${iconPath}?v=2`);
+    const icon = await fetch(`${app.origin}${iconPath}?v=3`);
     assert.equal(icon.status, 200, `${iconPath} should be served`);
     assert.equal(icon.headers.get("content-type"), "image/png");
     const bytes = new Uint8Array(await icon.arrayBuffer());

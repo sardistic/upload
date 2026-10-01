@@ -93,6 +93,10 @@ test("installation manifest and launch assets are available without an owner ses
   const script = await fetch(`${app.origin}${scriptPath}`);
   assert.equal(script.status, 200);
   assert.match(script.headers.get("content-type"), /text\/javascript/);
+  const worker = await fetch(`${app.origin}/sw.js`);
+  assert.equal(worker.status, 200);
+  assert.match(worker.headers.get("content-type"), /text\/javascript/);
+  assert.equal(worker.headers.get("cache-control"), "no-cache");
 });
 
 test("owner flow counts views and enforces public, unlisted, and private visibility", async (context) => {
@@ -499,6 +503,8 @@ function gatedYoutube() {
   return stubYoutube({
     release,
     async downloadTrack(videoId, { directory, signal }) {
+      // Cancellation can win the mkdir race before this stub starts listening.
+      signal?.throwIfAborted();
       await Promise.race([
         gate,
         new Promise((resolve, reject) => {

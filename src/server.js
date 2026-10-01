@@ -18,6 +18,7 @@ const staticFiles = new Map([
   ["/ocr.js", [path.join(publicDirectory, "ocr.js"), "text/javascript; charset=utf-8", false]],
   ["/theme.js", [path.join(publicDirectory, "theme.js"), "text/javascript; charset=utf-8", false]],
   ["/install.js", [path.join(publicDirectory, "install.js"), "text/javascript; charset=utf-8", false]],
+  ["/sw.js", [path.join(publicDirectory, "sw.js"), "text/javascript; charset=utf-8", false]],
   ["/styles.css", [path.join(publicDirectory, "styles.css"), "text/css; charset=utf-8", false]],
   ["/favicon.svg", [path.join(publicDirectory, "favicon.svg"), "image/svg+xml", false]],
   ["/apple-touch-icon.png", [path.join(publicDirectory, "apple-touch-icon.png"), "image/png", false]],
@@ -612,7 +613,7 @@ export async function createSardropServer(overrides = {}) {
         const body = await readFile(filename);
         response.writeHead(200, baseHeaders({
           "Content-Type": contentType,
-          "Cache-Control": url.pathname === "/" ? "no-cache" : (immutable ? "public, max-age=31536000, immutable" : "public, max-age=3600"),
+          "Cache-Control": url.pathname === "/" || url.pathname === "/sw.js" ? "no-cache" : (immutable ? "public, max-age=31536000, immutable" : "public, max-age=3600"),
           "Content-Security-Policy": "default-src 'self'; img-src 'self' https://veles.cards blob: data:; media-src 'self' blob:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
         }));
         return response.end(body);

@@ -1,5 +1,11 @@
 # Architectural decisions
 
+## 2026-10-01 - Reliable install initialization and Android compatibility
+
+After a report that Android Chrome did not show installation, a live mobile-emulated check showed the current button and valid manifest but did not reproduce the user's device. An early-execution reproduction did expose a separate failure: the script selected header/dialog nodes before parsing, set its initialization guard, then threw, leaving both buttons hidden. Initialization now waits for the document when needed, remains idempotent, and the HTML shows the controls by default. The script version is bumped to bypass prior cached bytes.
+
+A root service worker adds compatibility with Chrome versions whose native install promotion still checks for a fetch handler. It forwards navigation requests to the network without a cache or offline response. API calls, uploads, and media requests bypass its handler, preserving authentication, privacy changes, and ranges. The worker is served with no-cache and registered with updateViaCache none. This supersedes the earlier no-service-worker decision; it does not introduce offline browsing or media storage.
+
 ## 2026-10-01 - Browser installation with platform instructions
 
 The existing web manifest gains a stable root identity/scope and dedicated 192px/512px PNG icons rendered from the existing upload artwork. Both public and owner headers offer Install app. A separate first-party, idempotent script captures Chromium’s deferred native prompt, invokes it only on a user click, and shows platform-specific menu instructions when no prompt is available. Installed standalone windows hide the action; dismissing a prompt keeps the instructions available.

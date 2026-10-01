@@ -12,6 +12,9 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
       SESSION_DAYS: ${SESSION_DAYS:-30}
+      PLAYLIST_IMPORT: ${PLAYLIST_IMPORT:-on}
+      PLAYLIST_MAX_TRACKS: ${PLAYLIST_MAX_TRACKS:-100}
+      PLAYLIST_AUDIO_QUALITY: ${PLAYLIST_AUDIO_QUALITY:-0}
     volumes:
       - ./data:/data
     networks:
@@ -20,7 +23,7 @@ services:
           - sard-upload
     security_opt:
       - no-new-privileges:true
-    mem_limit: 256m
+    mem_limit: 512m
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000/healthz"]
       interval: 30s

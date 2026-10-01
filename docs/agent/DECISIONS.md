@@ -1,5 +1,11 @@
 # Architectural decisions
 
+## 2026-10-01 - Browser installation with platform instructions
+
+The existing web manifest gains a stable root identity/scope and dedicated 192px/512px PNG icons rendered from the existing upload artwork. Both public and owner headers offer Install app. A separate first-party, idempotent script captures Chromium’s deferred native prompt, invokes it only on a user click, and shows platform-specific menu instructions when no prompt is available. Installed standalone windows hide the action; dismissing a prompt keeps the instructions available.
+
+Installation does not introduce offline caching or a service worker. Current Chromium install promotion does not require one, and network access is required for the media host’s core operations. This preserves server-driven privacy changes and no-store API/media responses. Mobile headers wrap with 44px touch controls to fit the extra action on narrow screens.
+
 ## 2026-08-12 — Single-service, dependency-free image host
 
 Sardrop uses the Node.js standard library for HTTP, authentication, file serving, and metadata persistence. Image bytes live in a persistent data directory and upload metadata is stored in an atomically replaced JSON document. This keeps the personal service small, auditable, and portable without an external database.
@@ -55,3 +61,15 @@ The theme control binds idempotently: each `.theme-toggle` is marked with a `dat
 This is required because the edge in front of this service runs Cloudflare Rocket Loader, which replaces `document.addEventListener` and replays `DOMContentLoaded` after its own script pass. `data-cfasync="false"` keeps `theme.js` from being deferred but does not exempt it from that replay, so the previous one-shot binding attached two listeners per control. A single click then applied the theme twice and returned to the starting value, making the toggle look inert in production while working locally. Idempotent binding fixes the behavior at the application level regardless of whether Rocket Loader is later disabled at the edge.
 
 The public index header drops the decorative `online` status pill. The surface is a read-only object index; a liveness dot that is hardcoded rather than derived from any health signal asserts something the page does not actually measure.
+
+## 2026-08-23 - Playlist import as an offer, not an action
+
+Pasting a YouTube playlist URL into the owner workbench opens a dialog describing what was found and waits. It never starts downloading on the paste itself. A paste is a low-intent gesture that can happen by accident, and this one would otherwise spend minutes of CPU and tens of megabytes of disk without being asked; the media-file paste path stays immediate because it acts only on bytes the operator already chose.
+
+`yt-dlp` and `ffmpeg` are subprocesses rather than libraries, so the pasted text is never handed to them. Playlist and video identifiers are validated against `[A-Za-z0-9_-]` and the URLs passed to `yt-dlp` are rebuilt from those identifiers; every invocation uses an argv array with no shell. Audio quality is validated against a fixed pattern for the same reason. `WL` and `LL` are rejected outright because they resolve only against the viewer's own account.
+
+Import jobs live in memory and are deliberately not persisted. The uploads they produce are ordinary version 5 records, indistinguishable from a pasted MP3, so no metadata version has to describe a transient download and a crash mid-import cannot leave a half-written job in `metadata.json`. Progress is therefore lost on restart while every completed track survives. One job runs at a time and tracks are fetched serially, which keeps the single Node process inside a predictable memory and CPU budget; the container limit moves from 256 MB to 512 MB to cover `ffmpeg` transcoding alongside the server.
+
+The feature is capability-gated end to end. The server probes both binaries at startup, `/api/session` publishes `playlistImport`, and the client only intercepts a paste when that flag is true. A deployment without the binaries, or with `PLAYLIST_IMPORT=off`, behaves exactly like the previous build.
+
+Downloading from YouTube is a decision about that service's terms and about copyright, and the service cannot evaluate either. The behaviour is documented in `README.md` and left to the operator rather than encoded as a check.

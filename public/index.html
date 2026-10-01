@@ -8,9 +8,10 @@
     <title>Uploads | Sardistic</title>
     <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=3">
-    <link rel="manifest" href="/site.webmanifest?v=3">
+    <link rel="manifest" href="/site.webmanifest?v=4">
     <script src="/theme.js?v=6" data-cfasync="false"></script>
-    <link rel="stylesheet" href="/styles.css?v=8">
+    <script src="/install.js?v=1" defer data-cfasync="false"></script>
+    <link rel="stylesheet" href="/styles.css?v=10">
   </head>
   <body>
     <div class="boot-screen" id="boot-screen" aria-live="polite">
@@ -25,6 +26,7 @@
         </a>
         <div class="header-actions">
           <a class="header-link" href="#public-showcase">/objects</a>
+          <button class="secondary-button secondary-button--compact install-button hidden" type="button" aria-controls="install-dialog">Install app</button>
           <button class="theme-toggle" type="button" aria-label="Switch to light mode" title="Switch to light mode">
             <svg class="theme-icon theme-icon--sun" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
             <svg class="theme-icon theme-icon--moon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4a8.5 8.5 0 1 0 11.2 11.2Z"/></svg>
@@ -100,6 +102,7 @@
         </a>
         <div class="header-actions">
           <span class="owner-mode">Owner archive</span>
+          <button class="secondary-button secondary-button--compact install-button hidden" type="button" aria-controls="install-dialog">Install app</button>
           <button class="theme-toggle" type="button" aria-label="Switch to light mode" title="Switch to light mode">
             <svg class="theme-icon theme-icon--sun" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
             <svg class="theme-icon theme-icon--moon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4a8.5 8.5 0 1 0 11.2 11.2Z"/></svg>
@@ -114,6 +117,7 @@
             <p class="kicker">New upload</p>
             <h1 id="upload-title">Put it somewhere.</h1>
             <p>Paste with <kbd>Ctrl</kbd> + <kbd>V</kbd>, drop it, or choose it. The result is a URL with exactly the reach you assign.</p>
+            <p class="workspace-hint hidden" id="playlist-hint">Paste a YouTube playlist URL and the whole list can come down as MP3.</p>
             <label class="ocr-switch" for="auto-ocr">
               <input id="auto-ocr" type="checkbox" checked>
               <span class="ocr-switch__control" aria-hidden="true"></span>
@@ -149,6 +153,18 @@
             <button class="copy-button" id="latest-copy" type="button"><span>Copy</span></button>
           </div>
           <button class="icon-button result-close" id="result-close" type="button" aria-label="Dismiss result">×</button>
+        </section>
+
+        <section class="playlist-progress hidden" id="playlist-progress" aria-live="polite">
+          <div class="playlist-progress__head">
+            <div class="playlist-progress__copy">
+              <span class="kicker">Playlist import</span>
+              <strong id="playlist-progress-title"></strong>
+            </div>
+            <button class="secondary-button secondary-button--compact" id="playlist-stop" type="button">Stop</button>
+          </div>
+          <div class="playlist-bar"><span id="playlist-bar-fill"></span></div>
+          <p class="playlist-status" id="playlist-status"></p>
         </section>
 
         <section class="library" aria-labelledby="library-title">
@@ -190,6 +206,44 @@
       </footer>
     </div>
 
+    <dialog class="modal install-dialog" id="install-dialog" aria-labelledby="install-title" aria-describedby="install-description">
+      <form method="dialog">
+        <div class="modal-header">
+          <div><p class="kicker">Keep it handy</p><h2 id="install-title">Install Uploads</h2></div>
+          <button class="icon-button" aria-label="Close install instructions">×</button>
+        </div>
+        <p id="install-description">Add Uploads to your home screen or desktop to open it as an app.</p>
+        <ol class="install-steps" id="install-steps"></ol>
+        <p class="install-note">An internet connection is needed to browse and upload files.</p>
+        <div class="modal-actions">
+          <button class="secondary-button" value="close">Close</button>
+          <button class="primary-button hidden" id="install-confirm" type="button">Install app</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal modal--wide" id="playlist-dialog">
+      <form method="dialog" id="playlist-form">
+        <div class="modal-header">
+          <div><p class="kicker">YouTube playlist</p><h2 id="playlist-heading">Reading playlist</h2></div>
+          <button class="icon-button" value="cancel" aria-label="Close">×</button>
+        </div>
+        <p class="playlist-meta" id="playlist-meta">Asking yt-dlp what this playlist contains.</p>
+        <p class="form-error hidden" id="playlist-error" role="alert"></p>
+        <ol class="playlist-preview hidden" id="playlist-preview"></ol>
+        <fieldset class="visibility-picker visibility-picker--modal" id="playlist-visibility">
+          <legend>Visibility for imported tracks</legend>
+          <label><input type="radio" name="playlist-visibility" value="public"><span><strong>Public</strong><small>Direct link + public index</small></span></label>
+          <label><input type="radio" name="playlist-visibility" value="unlisted" checked><span><strong>Link only</strong><small>URL access; never listed</small></span></label>
+          <label><input type="radio" name="playlist-visibility" value="private"><span><strong>Private</strong><small>Only while signed in</small></span></label>
+        </fieldset>
+        <div class="modal-actions">
+          <button class="secondary-button" value="cancel" formnovalidate>Cancel</button>
+          <button class="primary-button" id="playlist-start" value="default" disabled>Download as MP3</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog class="modal" id="edit-dialog">
       <form method="dialog" id="edit-form">
         <div class="modal-header">
@@ -227,6 +281,6 @@
     </dialog>
 
     <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
-    <script src="/app.js?v=9" type="module"></script>
+    <script src="/app.js?v=10" type="module"></script>
   </body>
 </html>

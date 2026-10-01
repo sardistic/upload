@@ -12,6 +12,11 @@ const state = {
   uploading: false,
   autoOcr: true,
   ocrJobs: new Map(),
+  playlistImport: false,
+  playlistMaxTracks: 100,
+  playlist: null,
+  playlistJob: null,
+  playlistPoll: null,
 };
 
 const elements = {
@@ -61,6 +66,19 @@ const elements = {
   publicGallery: document.querySelector("#public-gallery"),
   publicEmpty: document.querySelector("#public-empty"),
   publicCount: document.querySelector("#public-count"),
+  playlistHint: document.querySelector("#playlist-hint"),
+  playlistDialog: document.querySelector("#playlist-dialog"),
+  playlistForm: document.querySelector("#playlist-form"),
+  playlistHeading: document.querySelector("#playlist-heading"),
+  playlistMeta: document.querySelector("#playlist-meta"),
+  playlistError: document.querySelector("#playlist-error"),
+  playlistPreview: document.querySelector("#playlist-preview"),
+  playlistStart: document.querySelector("#playlist-start"),
+  playlistProgress: document.querySelector("#playlist-progress"),
+  playlistProgressTitle: document.querySelector("#playlist-progress-title"),
+  playlistBarFill: document.querySelector("#playlist-bar-fill"),
+  playlistStatus: document.querySelector("#playlist-status"),
+  playlistStop: document.querySelector("#playlist-stop"),
   toasts: document.querySelector("#toast-region"),
 };
 
@@ -125,6 +143,9 @@ async function bootstrap() {
     elements.autoOcr.checked = state.autoOcr;
     const session = await request("/api/session");
     state.maxUploadBytes = session.maxUploadBytes;
+    state.playlistImport = Boolean(session.playlistImport);
+    state.playlistMaxTracks = session.playlistMaxTracks ?? state.playlistMaxTracks;
+    elements.playlistHint.classList.toggle("hidden", !state.playlistImport);
     if (session.authenticated) {
       await showApp();
     } else {
@@ -158,6 +179,7 @@ async function showApp() {
   if (elements.ownerDialog.open) elements.ownerDialog.close();
   elements.app.classList.remove("hidden");
   await loadUploads();
+  if (state.playlistImport) await resumePlaylistJob();
 }
 
 elements.ownerAccess.addEventListener("click", () => {
@@ -245,9 +267,16 @@ document.addEventListener("paste", (event) => {
     .filter((item) => item.kind === "file" && isSupportedMediaType(item.type))
     .map((item) => item.getAsFile())
     .filter(Boolean);
-  if (!files.length) return;
+  if (files.length) {
+    event.preventDefault();
+    uploadFiles(files);
+    return;
+  }
+  if (!state.playlistImport) return;
+  const playlist = findPlaylistUrl(event.clipboardData?.getData("text/plain"));
+  if (!playlist) return;
   event.preventDefault();
-  uploadFiles(files);
+  offerPlaylist(playlist);
 });
 
 for (const eventName of ["dragenter", "dragover"]) {
@@ -934,6 +963,231 @@ elements.deleteForm.addEventListener("submit", async (event) => {
     elements.confirmDelete.disabled = false;
   }
 });
+
+const YOUTUBE_HOSTS = new Set([
+  "youtube.com",
+  "www.youtube.com",
+  "m.youtube.com",
+  "music.youtube.com",
+  "youtu.be",
+  "www.youtu.be",
+]);
+
+/**
+ * Mirrors the server-side check so a paste is only intercepted when the server
+ * would actually accept it. The server validates again and rebuilds the URL.
+ */
+function findPlaylistUrl(text) {
+  const source = String(text ?? "").slice(0, 4096);
+  if (!source.includes("list=")) return null;
+  for (const token of source.split(/\s+/)) {
+    const trimmed = token.replace(/^[<("\'`]+/, "").replace(/[>)"\'`,.;!]+$/, "");
+    if (trimmed.length > 2048) continue;
+    let url;
+    try {
+      url = new URL(trimmed);
+    } catch {
+      continue;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") continue;
+    if (!YOUTUBE_HOSTS.has(url.hostname.toLowerCase())) continue;
+    const list = url.searchParams.get("list");
+    if (!list || !/^[A-Za-z0-9_-]{2,64}$/.test(list) || list === "WL" || list === "LL") continue;
+    return { id: list, url: `https://www.youtube.com/playlist?list=${list}` };
+  }
+  return null;
+}
+
+async function offerPlaylist(playlist) {
+  if (state.playlistJob && !isFinishedJob(state.playlistJob)) {
+    toast("A playlist import is already running", true);
+    return;
+  }
+  state.playlist = null;
+  elements.playlistHeading.textContent = "Reading playlist";
+  elements.playlistMeta.textContent = "Asking yt-dlp what this playlist contains.";
+  elements.playlistError.classList.add("hidden");
+  elements.playlistPreview.classList.add("hidden");
+  elements.playlistPreview.replaceChildren();
+  elements.playlistStart.disabled = true;
+  elements.playlistStart.textContent = "Download as MP3";
+  setSelectedVisibility("playlist-visibility", selectedVisibility("upload-visibility"));
+  if (!elements.playlistDialog.open) elements.playlistDialog.showModal();
+
+  try {
+    const body = await request("/api/playlists/inspect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: playlist.url }),
+    });
+    if (!elements.playlistDialog.open) return;
+    state.playlist = body.playlist;
+    showPlaylistOffer(body.playlist);
+  } catch (error) {
+    if (!elements.playlistDialog.open) return;
+    elements.playlistMeta.textContent = "That playlist could not be read.";
+    elements.playlistError.textContent = error.message;
+    elements.playlistError.classList.remove("hidden");
+  }
+}
+
+function showPlaylistOffer(playlist) {
+  const count = playlist.tracks.length;
+  const seconds = playlist.tracks.reduce((total, track) => total + (track.duration ?? 0), 0);
+  const details = [`${count} ${count === 1 ? "track" : "tracks"}`];
+  if (playlist.uploader) details.push(playlist.uploader);
+  if (seconds) details.push(formatDuration(seconds));
+  if (playlist.truncated) details.push(`first ${playlist.maxTracks} only`);
+
+  elements.playlistHeading.textContent = playlist.title;
+  elements.playlistMeta.textContent = details.join(" \u00b7 ");
+  elements.playlistPreview.replaceChildren(...playlist.tracks.slice(0, 40).map((track) => {
+    const item = document.createElement("li");
+    item.textContent = track.title;
+    if (track.duration) {
+      const detail = document.createElement("small");
+      detail.textContent = formatDuration(track.duration);
+      item.append(detail);
+    }
+    return item;
+  }));
+  elements.playlistPreview.classList.toggle("hidden", !count);
+  elements.playlistStart.disabled = !count;
+  elements.playlistStart.textContent = count
+    ? `Download ${count} as MP3`
+    : "Nothing to download";
+}
+
+elements.playlistForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel" || !state.playlist) {
+    elements.playlistDialog.close();
+    return;
+  }
+
+  const playlist = state.playlist;
+  elements.playlistStart.disabled = true;
+  try {
+    const body = await request("/api/playlists/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: playlist.url,
+        visibility: selectedVisibility("playlist-visibility"),
+      }),
+    });
+    elements.playlistDialog.close();
+    trackPlaylistJob(body.job);
+    toast(`Importing ${body.job.total} ${body.job.total === 1 ? "track" : "tracks"} as MP3`);
+  } catch (error) {
+    elements.playlistError.textContent = error.message;
+    elements.playlistError.classList.remove("hidden");
+    elements.playlistStart.disabled = false;
+  }
+});
+
+elements.playlistStop.addEventListener("click", async () => {
+  const job = state.playlistJob;
+  if (!job) return;
+  if (isFinishedJob(job)) {
+    elements.playlistProgress.classList.add("hidden");
+    state.playlistJob = null;
+    return;
+  }
+  elements.playlistStop.disabled = true;
+  try {
+    const body = await request(`/api/playlists/jobs/${job.id}`, { method: "DELETE" });
+    renderPlaylistJob(body.job);
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    elements.playlistStop.disabled = false;
+  }
+});
+
+function isFinishedJob(job) {
+  return ["done", "failed", "cancelled"].includes(job?.state);
+}
+
+async function resumePlaylistJob() {
+  try {
+    const body = await request("/api/playlists/jobs");
+    const active = body.jobs.find((job) => !isFinishedJob(job));
+    if (active) trackPlaylistJob(active);
+  } catch {
+    // A missing or disabled importer simply leaves the panel hidden.
+  }
+}
+
+function trackPlaylistJob(job) {
+  renderPlaylistJob(job);
+  if (state.playlistPoll) window.clearInterval(state.playlistPoll);
+  if (isFinishedJob(job)) return;
+  state.playlistPoll = window.setInterval(pollPlaylistJob, 1500);
+}
+
+async function pollPlaylistJob() {
+  const current = state.playlistJob;
+  if (!current) return;
+  try {
+    const body = await request(`/api/playlists/jobs/${current.id}`);
+    const finishing = body.job.completed !== current.completed || isFinishedJob(body.job);
+    renderPlaylistJob(body.job);
+    if (finishing) await loadUploads();
+    if (isFinishedJob(body.job)) {
+      window.clearInterval(state.playlistPoll);
+      state.playlistPoll = null;
+      announcePlaylistResult(body.job);
+    }
+  } catch (error) {
+    window.clearInterval(state.playlistPoll);
+    state.playlistPoll = null;
+    toast(error.message, true);
+  }
+}
+
+function renderPlaylistJob(job) {
+  state.playlistJob = job;
+  const finished = isFinishedJob(job);
+  const settled = job.completed + job.failed;
+  const percent = job.total ? Math.round((settled / job.total) * 100) : 0;
+
+  elements.playlistProgress.classList.remove("hidden");
+  elements.playlistProgress.classList.toggle("playlist-progress--failed", job.state === "failed");
+  elements.playlistProgressTitle.textContent = job.playlistTitle;
+  elements.playlistBarFill.style.width = `${finished ? 100 : percent}%`;
+  elements.playlistStop.textContent = finished ? "Dismiss" : "Stop";
+
+  const status = document.createElement("span");
+  if (finished) {
+    const outcome = {
+      done: "Import complete",
+      cancelled: "Import stopped",
+      failed: job.error ? `Import failed: ${job.error}` : "Import failed",
+    }[job.state];
+    status.textContent = `${outcome} \u00b7 ${job.completed} of ${job.total} saved`;
+    if (job.failed) status.textContent += `, ${job.failed} failed`;
+  } else {
+    const track = document.createElement("b");
+    track.textContent = job.currentTitle ?? "Starting";
+    status.append(`Track ${Math.max(1, job.currentIndex)} of ${job.total} \u00b7 `, track);
+    if (job.failed) status.append(` \u00b7 ${job.failed} failed`);
+  }
+  elements.playlistStatus.replaceChildren(status);
+}
+
+function announcePlaylistResult(job) {
+  const failures = job.tracks.filter((track) => track.status === "failed");
+  if (job.completed) {
+    toast(`${job.completed} ${job.completed === 1 ? "track" : "tracks"} saved as MP3`);
+    const last = [...job.tracks].reverse().find((track) => track.uploadId);
+    const upload = state.uploads.find((item) => item.id === last?.uploadId);
+    if (upload) showLatest(upload);
+  }
+  if (failures.length) {
+    toast(`${failures.length} ${failures.length === 1 ? "track" : "tracks"} failed: ${failures[0].error}`, true);
+  }
+}
 
 async function copyText(text) {
   try {

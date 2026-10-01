@@ -1,10 +1,12 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PlaylistImporter, serializePlaylistJob } from "./playlists.js";
 import { UploadStore } from "./store.js";
+import { findPlaylistUrl, normalizeAudioQuality, parsePlaylistUrl, YoutubeTool } from "./youtube.js";
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectDirectory = path.resolve(currentDirectory, "..");
@@ -15,10 +17,13 @@ const staticFiles = new Map([
   ["/app.js", [path.join(publicDirectory, "app.js"), "text/javascript; charset=utf-8", false]],
   ["/ocr.js", [path.join(publicDirectory, "ocr.js"), "text/javascript; charset=utf-8", false]],
   ["/theme.js", [path.join(publicDirectory, "theme.js"), "text/javascript; charset=utf-8", false]],
+  ["/install.js", [path.join(publicDirectory, "install.js"), "text/javascript; charset=utf-8", false]],
   ["/styles.css", [path.join(publicDirectory, "styles.css"), "text/css; charset=utf-8", false]],
   ["/favicon.svg", [path.join(publicDirectory, "favicon.svg"), "image/svg+xml", false]],
   ["/apple-touch-icon.png", [path.join(publicDirectory, "apple-touch-icon.png"), "image/png", false]],
   ["/icon-maskable.png", [path.join(publicDirectory, "icon-maskable.png"), "image/png", false]],
+  ["/icon-192.png", [path.join(publicDirectory, "icon-192.png"), "image/png", false]],
+  ["/icon-512.png", [path.join(publicDirectory, "icon-512.png"), "image/png", false]],
   ["/site.webmanifest", [path.join(publicDirectory, "site.webmanifest"), "application/manifest+json", false]],
   ["/vendor/tesseract/tesseract.min.js", [path.join(dependencyDirectory, "tesseract.js", "dist", "tesseract.min.js"), "text/javascript; charset=utf-8", true]],
   ["/vendor/tesseract/worker.min.js", [path.join(dependencyDirectory, "tesseract.js", "dist", "worker.min.js"), "text/javascript; charset=utf-8", true]],
@@ -53,6 +58,7 @@ function loadConfig(overrides = {}) {
   const port = Number(overrides.port ?? process.env.PORT ?? 3000);
   const maxUploadMb = Number(overrides.maxUploadMb ?? process.env.MAX_UPLOAD_MB ?? 50);
   const sessionDays = Number(overrides.sessionDays ?? process.env.SESSION_DAYS ?? 30);
+  const playlistMaxTracks = Number(overrides.playlistMaxTracks ?? process.env.PLAYLIST_MAX_TRACKS ?? 100);
   const password = overrides.password ?? process.env.APP_PASSWORD;
   const sessionSecret = overrides.sessionSecret ?? process.env.SESSION_SECRET;
 
@@ -69,6 +75,9 @@ function loadConfig(overrides = {}) {
   if (!Number.isFinite(sessionDays) || sessionDays < 1 || sessionDays > 365) {
     throw new Error("SESSION_DAYS must be between 1 and 365");
   }
+  if (!Number.isInteger(playlistMaxTracks) || playlistMaxTracks < 1 || playlistMaxTracks > 500) {
+    throw new Error("PLAYLIST_MAX_TRACKS must be between 1 and 500");
+  }
 
   return {
     port,
@@ -79,6 +88,14 @@ function loadConfig(overrides = {}) {
     maxUploadBytes: Math.round(maxUploadMb * 1024 * 1024),
     sessionMs: sessionDays * 86_400_000,
     secureCookies: overrides.secureCookies ?? String(overrides.baseUrl ?? process.env.BASE_URL ?? "").startsWith("https://"),
+    playlistImport: overrides.playlistImport
+      ?? String(process.env.PLAYLIST_IMPORT ?? "on").toLowerCase() !== "off",
+    playlistMaxTracks,
+    playlistAudioQuality: normalizeAudioQuality(
+      overrides.playlistAudioQuality ?? process.env.PLAYLIST_AUDIO_QUALITY,
+    ),
+    ytdlpPath: overrides.ytdlpPath ?? process.env.YTDLP_PATH ?? "yt-dlp",
+    ffmpegPath: overrides.ffmpegPath ?? process.env.FFMPEG_PATH ?? "ffmpeg",
   };
 }
 
@@ -496,10 +513,91 @@ async function serveMedia(request, response, upload, store, ownerView = false, c
   }
 }
 
+/**
+ * Validates a media buffer, allocates a free canonical path, and persists the record.
+ * Shared by the paste/drop upload route and the playlist importer so both produce
+ * byte-identical upload records.
+ */
+async function ingestMedia(store, buffer, options = {}) {
+  const detected = detectMedia(buffer, options.claimedMime ?? "", options.suppliedName ?? "");
+  if (!detected) {
+    const error = new Error("Use PNG, JPEG, GIF, WebP, AVIF, MP4, MOV, WebM, MP3, M4A, OGG, WAV, or FLAC");
+    error.statusCode = 415;
+    throw error;
+  }
+
+  let slug;
+  let publicPath;
+  do {
+    slug = makeSlug();
+    publicPath = `/${slug}.${detected.extension}`;
+  } while (store.hasPath(publicPath));
+
+  const originalName = cleanFilename(options.suppliedName, detected.extension, detected.mediaKind);
+  const now = new Date().toISOString();
+  const upload = {
+    id: randomUUID(),
+    slug,
+    extension: detected.extension,
+    mime: detected.mime,
+    mediaKind: detected.mediaKind,
+    publicPath,
+    originalName,
+    title: cleanTitle(options.title, path.parse(originalName).name || `Pasted ${detected.mediaKind}`),
+    size: buffer.length,
+    width: detected.width ?? positiveInteger(options.width),
+    height: detected.height ?? positiveInteger(options.height),
+    duration: detected.mediaKind === "image" ? null : positiveNumber(options.duration),
+    visibility: options.visibility,
+    views: 0,
+    tags: [],
+    ocrText: "",
+    ocrConfidence: null,
+    ocrUpdatedAt: null,
+    titleSource: options.titleSource ?? "filename",
+    aliasPath: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await store.create(upload, buffer);
+  return upload;
+}
+
 export async function createSardropServer(overrides = {}) {
   const config = loadConfig(overrides);
   const store = new UploadStore(config.dataDir);
   await store.init();
+
+  const playlistWorkDir = path.join(config.dataDir, "playlist-work");
+  let importer = null;
+  if (config.playlistImport) {
+    const youtube = overrides.youtube ?? new YoutubeTool({
+      ytdlpPath: config.ytdlpPath,
+      ffmpegPath: config.ffmpegPath,
+      audioQuality: config.playlistAudioQuality,
+    });
+    const probe = overrides.youtube ? { available: true } : await youtube.probe();
+    if (probe.available) {
+      // Clear anything a previous process left behind before accepting new jobs.
+      await rm(playlistWorkDir, { recursive: true, force: true });
+      importer = new PlaylistImporter({
+        youtube,
+        workDir: playlistWorkDir,
+        maxTracks: config.playlistMaxTracks,
+        maxUploadBytes: config.maxUploadBytes,
+        ingest: (buffer, options) => ingestMedia(store, buffer, options),
+      });
+    } else {
+      console.warn("Playlist import is off: yt-dlp and ffmpeg are not both runnable");
+    }
+  }
+
+  function requirePlaylistImport(response) {
+    if (importer) return true;
+    sendJson(response, 503, { error: "Playlist import is not available on this server" });
+    return false;
+  }
 
   const server = createServer(async (request, response) => {
     try {
@@ -524,6 +622,8 @@ export async function createSardropServer(overrides = {}) {
         return sendJson(response, 200, {
           authenticated: validSession(request, config),
           maxUploadBytes: config.maxUploadBytes,
+          playlistImport: Boolean(importer),
+          playlistMaxTracks: config.playlistMaxTracks,
         });
       }
 
@@ -567,57 +667,92 @@ export async function createSardropServer(overrides = {}) {
         if (!isSameOrigin(request, config)) return sendJson(response, 403, { error: "Origin not allowed" });
         const mediaBuffer = await readBody(request, config.maxUploadBytes);
         if (!mediaBuffer.length) return sendJson(response, 400, { error: "No file data received" });
-        const suppliedName = request.headers["x-file-name"];
-        const detected = detectMedia(mediaBuffer, request.headers["content-type"], suppliedName);
-        if (!detected) {
-          return sendJson(response, 415, {
-            error: "Use PNG, JPEG, GIF, WebP, AVIF, MP4, MOV, WebM, MP3, M4A, OGG, WAV, or FLAC",
-          });
-        }
-
-        let slug;
-        let publicPath;
-        do {
-          slug = makeSlug();
-          publicPath = `/${slug}.${detected.extension}`;
-        } while (store.hasPath(publicPath));
-
-        const originalName = cleanFilename(suppliedName, detected.extension, detected.mediaKind);
         const requestedVisibility = request.headers["x-upload-visibility"];
         const visibility = requestedVisibility === undefined
           ? (request.headers["x-upload-private"] === "true" ? "private" : "unlisted")
           : parseVisibility(requestedVisibility);
         if (!visibility) return sendJson(response, 400, { error: "Invalid visibility" });
-        const now = new Date().toISOString();
-        const upload = {
-          id: randomUUID(),
-          slug,
-          extension: detected.extension,
-          mime: detected.mime,
-          mediaKind: detected.mediaKind,
-          publicPath,
-          originalName,
-          title: cleanTitle(
-            request.headers["x-media-title"] ?? request.headers["x-image-title"],
-            path.parse(originalName).name || `Pasted ${detected.mediaKind}`,
-          ),
-          size: mediaBuffer.length,
-          width: detected.width ?? positiveInteger(request.headers["x-media-width"] ?? request.headers["x-image-width"]),
-          height: detected.height ?? positiveInteger(request.headers["x-media-height"] ?? request.headers["x-image-height"]),
-          duration: detected.mediaKind === "image" ? null : positiveNumber(request.headers["x-media-duration"]),
+        const upload = await ingestMedia(store, mediaBuffer, {
+          suppliedName: request.headers["x-file-name"],
+          claimedMime: request.headers["content-type"],
+          title: request.headers["x-media-title"] ?? request.headers["x-image-title"],
+          width: request.headers["x-media-width"] ?? request.headers["x-image-width"],
+          height: request.headers["x-media-height"] ?? request.headers["x-image-height"],
+          duration: request.headers["x-media-duration"],
           visibility,
-          views: 0,
-          tags: [],
-          ocrText: "",
-          ocrConfidence: null,
-          ocrUpdatedAt: null,
-          titleSource: "filename",
-          aliasPath: null,
-          createdAt: now,
-          updatedAt: now,
-        };
-        await store.create(upload, mediaBuffer);
+        });
         return sendJson(response, 201, { upload: serializeUpload(upload, config) });
+      }
+
+      if (url.pathname === "/api/playlists/inspect" && request.method === "POST") {
+        if (!requireOwner(request, response, config)) return;
+        if (!isSameOrigin(request, config)) return sendJson(response, 403, { error: "Origin not allowed" });
+        if (!requirePlaylistImport(response)) return;
+        const body = await readJson(request);
+        const playlist = parsePlaylistUrl(body.url) ?? findPlaylistUrl(body.url);
+        if (!playlist) return sendJson(response, 400, { error: "That is not a YouTube playlist URL" });
+        const details = await importer.inspect(playlist);
+        return sendJson(response, 200, {
+          playlist: {
+            id: details.id,
+            url: details.url,
+            title: details.title,
+            uploader: details.uploader,
+            truncated: details.truncated,
+            maxTracks: config.playlistMaxTracks,
+            tracks: details.tracks,
+          },
+        });
+      }
+
+      if (url.pathname === "/api/playlists/jobs" && request.method === "GET") {
+        if (!requireOwner(request, response, config)) return;
+        if (!requirePlaylistImport(response)) return;
+        return sendJson(response, 200, { jobs: importer.list().map(serializePlaylistJob) });
+      }
+
+      if (url.pathname === "/api/playlists/jobs" && request.method === "POST") {
+        if (!requireOwner(request, response, config)) return;
+        if (!isSameOrigin(request, config)) return sendJson(response, 403, { error: "Origin not allowed" });
+        if (!requirePlaylistImport(response)) return;
+        const body = await readJson(request, 65_536);
+        const playlist = parsePlaylistUrl(body.url) ?? findPlaylistUrl(body.url);
+        if (!playlist) return sendJson(response, 400, { error: "That is not a YouTube playlist URL" });
+        const visibility = body.visibility === undefined ? "unlisted" : parseVisibility(body.visibility);
+        if (!visibility) return sendJson(response, 400, { error: "Invalid visibility" });
+        if (importer.activeJob()) {
+          return sendJson(response, 409, { error: "A playlist import is already running" });
+        }
+        const details = await importer.inspect(playlist);
+        let tracks = details.tracks;
+        if (Array.isArray(body.trackIds) && body.trackIds.length) {
+          const wanted = new Set(body.trackIds.map((id) => String(id)));
+          tracks = tracks.filter((track) => wanted.has(track.id));
+        }
+        const job = importer.start({
+          playlist: { id: details.id, url: details.url, title: details.title },
+          tracks,
+          visibility,
+        });
+        return sendJson(response, 202, { job: serializePlaylistJob(job) });
+      }
+
+      const jobMatch = url.pathname.match(/^\/api\/playlists\/jobs\/([0-9a-f-]+)$/i);
+      if (jobMatch && request.method === "GET") {
+        if (!requireOwner(request, response, config)) return;
+        if (!requirePlaylistImport(response)) return;
+        const job = importer.get(jobMatch[1]);
+        if (!job) return sendJson(response, 404, { error: "Import not found" });
+        return sendJson(response, 200, { job: serializePlaylistJob(job) });
+      }
+
+      if (jobMatch && request.method === "DELETE") {
+        if (!requireOwner(request, response, config)) return;
+        if (!isSameOrigin(request, config)) return sendJson(response, 403, { error: "Origin not allowed" });
+        if (!requirePlaylistImport(response)) return;
+        const job = importer.cancel(jobMatch[1]);
+        if (!job) return sendJson(response, 404, { error: "Import not found" });
+        return sendJson(response, 200, { job: serializePlaylistJob(job) });
       }
 
       const contentMatch = url.pathname.match(/^\/api\/uploads\/([0-9a-f-]+)\/content$/i);
@@ -727,7 +862,7 @@ export async function createSardropServer(overrides = {}) {
     }
   });
 
-  return { server, store, config };
+  return { server, store, config, importer };
 }
 
 function positiveInteger(value) {

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createSardropServer } from "../src/server.js";
+import { findPlaylistUrl, normalizeAudioQuality, parsePlaylistUrl } from "../src/youtube.js";
 
 const onePixelPng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -29,7 +30,7 @@ tinyMp4.writeUInt32BE(24, 0);
 tinyMp4.write("ftypmp42", 4, "ascii");
 tinyMp4.write("isommp42", 16, "ascii");
 
-async function startApp(dataDir) {
+async function startApp(dataDir, overrides = {}) {
   const app = await createSardropServer({
     dataDir,
     password: "correct horse battery staple",
@@ -37,6 +38,8 @@ async function startApp(dataDir) {
     baseUrl: "http://sardrop.test",
     secureCookies: false,
     maxUploadMb: 2,
+    playlistImport: false,
+    ...overrides,
   });
   await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   const address = app.server.address();
@@ -56,6 +59,41 @@ async function login(app) {
   assert.equal(response.status, 200);
   return response.headers.get("set-cookie").split(";")[0];
 }
+
+test("installation manifest and launch assets are available without an owner session", async (context) => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "sardrop-install-test-"));
+  context.after(() => rm(dataDir, { recursive: true, force: true }));
+  const app = await startApp(dataDir);
+  context.after(() => app.close());
+
+  const home = await (await fetch(app.origin)).text();
+  const manifestPath = home.match(/rel="manifest" href="([^"]+)"/)[1];
+  const response = await fetch(`${app.origin}${manifestPath}`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /application\/manifest\+json/);
+  const manifest = await response.json();
+  assert.equal(manifest.id, "/");
+  assert.equal(manifest.start_url, "/");
+  assert.equal(manifest.scope, "/");
+  assert.equal(manifest.display, "standalone");
+  assert.equal(manifest.prefer_related_applications, false);
+
+  for (const size of [192, 512]) {
+    const entry = manifest.icons.find((icon) => icon.sizes === `${size}x${size}` && icon.purpose === "any");
+    assert.ok(entry, `manifest needs a ${size}px application icon`);
+    const icon = await fetch(`${app.origin}${entry.src}`);
+    assert.equal(icon.status, 200);
+    assert.equal(icon.headers.get("content-type"), "image/png");
+    const bytes = Buffer.from(await icon.arrayBuffer());
+    assert.deepEqual([...bytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+    assert.equal(bytes.readUInt32BE(16), size);
+    assert.equal(bytes.readUInt32BE(20), size);
+  }
+  const scriptPath = home.match(/src="([^"]*\/install\.js[^\"]*)"/)[1];
+  const script = await fetch(`${app.origin}${scriptPath}`);
+  assert.equal(script.status, 200);
+  assert.match(script.headers.get("content-type"), /text\/javascript/);
+});
 
 test("owner flow counts views and enforces public, unlisted, and private visibility", async (context) => {
   const dataDir = await mkdtemp(path.join(tmpdir(), "sardrop-test-"));
@@ -77,8 +115,8 @@ test("owner flow counts views and enforces public, unlisted, and private visibil
   assert.match(homeHtml, /<title>Uploads \| Sardistic<\/title>/);
   assert.match(homeHtml, /<html lang="en" data-theme="dark">/);
   assert.match(homeHtml, /\/theme\.js\?v=6/);
-  assert.match(homeHtml, /\/styles\.css\?v=8/);
-  assert.match(homeHtml, /\/app\.js\?v=9/);
+  assert.match(homeHtml, /\/styles\.css\?v=10/);
+  assert.match(homeHtml, /\/app\.js\?v=10/);
   assert.match(homeHtml, /Local OCR/);
   assert.match(homeHtml, /public_objects/);
   assert.doesNotMatch(homeHtml, /A small place/);
@@ -420,4 +458,303 @@ test("migrates legacy public and private metadata without losing records", async
   assert.equal(migrated.uploads[0].aliasPath, null);
   assert.equal(migrated.uploads[0].mediaKind, "image");
   assert.equal(migrated.uploads[0].duration, null);
+});
+
+const tinyMp3 = Buffer.concat([Buffer.from("ID3", "ascii"), Buffer.alloc(180)]);
+
+const stubTracks = [
+  { id: "aaaaaaaaaaa", title: "First track", uploader: "Test channel", duration: 191 },
+  { id: "bbbbbbbbbbb", title: "Second track", uploader: "Test channel", duration: 244 },
+];
+
+function stubYoutube(overrides = {}) {
+  const calls = { inspect: [], download: [] };
+  return {
+    calls,
+    async inspectPlaylist(playlist, options) {
+      calls.inspect.push({ playlist, options });
+      return {
+        id: playlist.id,
+        url: playlist.url,
+        title: "Night drive",
+        uploader: "Test channel",
+        truncated: false,
+        tracks: stubTracks.map((track) => ({ ...track })),
+      };
+    },
+    async downloadTrack(videoId, { directory }) {
+      calls.download.push(videoId);
+      const filePath = path.join(directory, "track.mp3");
+      await writeFile(filePath, tinyMp3);
+      return filePath;
+    },
+    ...overrides,
+  };
+}
+
+/** A stub whose downloads block until released, so job states are deterministic. */
+function gatedYoutube() {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  return stubYoutube({
+    release,
+    async downloadTrack(videoId, { directory, signal }) {
+      await Promise.race([
+        gate,
+        new Promise((resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new Error("Aborted")), { once: true });
+        }),
+      ]);
+      const filePath = path.join(directory, "track.mp3");
+      await writeFile(filePath, tinyMp3);
+      return filePath;
+    },
+  });
+}
+
+async function waitForJob(app, cookie, jobId) {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    const response = await fetch(`${app.origin}/api/playlists/jobs/${jobId}`, { headers: { Cookie: cookie } });
+    assert.equal(response.status, 200);
+    const { job } = await response.json();
+    if (["done", "failed", "cancelled"].includes(job.state)) return job;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("Playlist job never finished");
+}
+
+test("playlist URLs are recognized only for YouTube list identifiers", () => {
+  assert.deepEqual(
+    parsePlaylistUrl("https://www.youtube.com/playlist?list=PLabcdefghijklmnop"),
+    { id: "PLabcdefghijklmnop", url: "https://www.youtube.com/playlist?list=PLabcdefghijklmnop" },
+  );
+  assert.equal(
+    parsePlaylistUrl("https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=OLAK5uy_test").url,
+    "https://www.youtube.com/playlist?list=OLAK5uy_test",
+  );
+  assert.equal(parsePlaylistUrl("https://youtu.be/dQw4w9WgXcQ?list=PLtest12345").id, "PLtest12345");
+
+  // Personal lists need the viewer's own credentials, so they are never offered.
+  assert.equal(parsePlaylistUrl("https://www.youtube.com/playlist?list=WL"), null);
+  assert.equal(parsePlaylistUrl("https://www.youtube.com/playlist?list=LL"), null);
+  // Anything that is not a YouTube host, or carries no list, is ignored.
+  assert.equal(parsePlaylistUrl("https://vimeo.com/playlist?list=PLabcdef"), null);
+  assert.equal(parsePlaylistUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), null);
+  assert.equal(parsePlaylistUrl("javascript:alert(1)?list=PLabcdef"), null);
+  // A shell metacharacter cannot survive the identifier charset.
+  assert.equal(parsePlaylistUrl("https://www.youtube.com/playlist?list=PL;rm%20-rf%20/"), null);
+  assert.equal(parsePlaylistUrl("https://www.youtube.com/playlist?list=$(id)"), null);
+
+  assert.equal(
+    findPlaylistUrl("check this out https://www.youtube.com/playlist?list=PLabcdef123, great set").id,
+    "PLabcdef123",
+  );
+  assert.equal(findPlaylistUrl("no link here"), null);
+
+  assert.equal(normalizeAudioQuality("192K"), "192K");
+  assert.equal(normalizeAudioQuality("0"), "0");
+  assert.equal(normalizeAudioQuality("; reboot"), "0");
+  assert.equal(normalizeAudioQuality(undefined), "0");
+});
+
+test("playlist import is gated by session, origin, and server capability", async (context) => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "sardrop-test-"));
+  context.after(() => rm(dataDir, { recursive: true, force: true }));
+
+  const disabled = await startApp(dataDir);
+  context.after(async () => {
+    if (disabled.server.listening) await disabled.close();
+  });
+  const disabledCookie = await login(disabled);
+
+  const session = await (await fetch(`${disabled.origin}/api/session`)).json();
+  assert.equal(session.playlistImport, false);
+
+  const anonymous = await fetch(`${disabled.origin}/api/playlists/inspect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: disabled.origin },
+    body: JSON.stringify({ url: "https://www.youtube.com/playlist?list=PLabcdef123" }),
+  });
+  assert.equal(anonymous.status, 401);
+
+  const unavailable = await fetch(`${disabled.origin}/api/playlists/inspect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: disabled.origin, Cookie: disabledCookie },
+    body: JSON.stringify({ url: "https://www.youtube.com/playlist?list=PLabcdef123" }),
+  });
+  assert.equal(unavailable.status, 503);
+  await disabled.close();
+
+  const app = await startApp(dataDir, { playlistImport: true, youtube: stubYoutube() });
+  context.after(async () => {
+    if (app.server.listening) await app.close();
+  });
+  const cookie = await login(app);
+
+  const enabledSession = await (await fetch(`${app.origin}/api/session`)).json();
+  assert.equal(enabledSession.playlistImport, true);
+  assert.equal(enabledSession.playlistMaxTracks, 100);
+
+  const crossOrigin = await fetch(`${app.origin}/api/playlists/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: "https://evil.test", Cookie: cookie },
+    body: JSON.stringify({ url: "https://www.youtube.com/playlist?list=PLabcdef123" }),
+  });
+  assert.equal(crossOrigin.status, 403);
+
+  const notAPlaylist = await fetch(`${app.origin}/api/playlists/inspect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: app.origin, Cookie: cookie },
+    body: JSON.stringify({ url: "https://example.com/songs" }),
+  });
+  assert.equal(notAPlaylist.status, 400);
+
+  const missingJob = await fetch(`${app.origin}/api/playlists/jobs/11111111-2222-3333-4444-555555555555`, {
+    headers: { Cookie: cookie },
+  });
+  assert.equal(missingJob.status, 404);
+});
+
+test("a playlist import stores every track as an MP3 upload", async (context) => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "sardrop-test-"));
+  context.after(() => rm(dataDir, { recursive: true, force: true }));
+  const youtube = stubYoutube();
+  const app = await startApp(dataDir, { playlistImport: true, youtube });
+  context.after(async () => {
+    app.importer?.cancelAll();
+    if (app.server.listening) await app.close();
+  });
+  const cookie = await login(app);
+
+  const inspected = await fetch(`${app.origin}/api/playlists/inspect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: app.origin, Cookie: cookie },
+    body: JSON.stringify({ url: "look at https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLnightdrive" }),
+  });
+  assert.equal(inspected.status, 200);
+  const { playlist } = await inspected.json();
+  assert.equal(playlist.title, "Night drive");
+  assert.equal(playlist.tracks.length, 2);
+  // The canonical URL is rebuilt from the validated id rather than echoed back.
+  assert.equal(playlist.url, "https://www.youtube.com/playlist?list=PLnightdrive");
+
+  const started = await fetch(`${app.origin}/api/playlists/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: app.origin, Cookie: cookie },
+    body: JSON.stringify({ url: playlist.url, visibility: "private" }),
+  });
+  assert.equal(started.status, 202);
+  const { job } = await started.json();
+  assert.equal(job.total, 2);
+
+  const finished = await waitForJob(app, cookie, job.id);
+  assert.equal(finished.state, "done");
+  assert.equal(finished.completed, 2);
+  assert.equal(finished.failed, 0);
+  assert.deepEqual(youtube.calls.download, ["aaaaaaaaaaa", "bbbbbbbbbbb"]);
+
+  const uploads = await (await fetch(`${app.origin}/api/uploads`, { headers: { Cookie: cookie } })).json();
+  assert.equal(uploads.uploads.length, 2);
+  assert.deepEqual(uploads.uploads.map((upload) => upload.title).sort(), ["First track", "Second track"]);
+  for (const upload of uploads.uploads) {
+    assert.equal(upload.mediaKind, "audio");
+    assert.equal(upload.mime, "audio/mpeg");
+    assert.equal(upload.extension, "mp3");
+    assert.equal(upload.visibility, "private");
+    assert.equal(upload.titleSource, "manual");
+    assert.match(upload.originalName, /\.mp3$/);
+    assert.match(upload.publicPath, /^\/[a-z]+-[a-z]+-[a-z0-9]{6}\.mp3$/);
+  }
+  const first = uploads.uploads.find((upload) => upload.title === "First track");
+  assert.equal(first.duration, 191);
+
+  // Imported tracks obey the same visibility rules as a pasted upload.
+  assert.equal((await fetch(`${app.origin}${first.publicPath}`)).status, 404);
+  const owned = await fetch(`${app.origin}${first.previewUrl}`, { headers: { Cookie: cookie } });
+  assert.equal(owned.status, 200);
+  assert.equal(owned.headers.get("content-type"), "audio/mpeg");
+});
+
+test("a failing track is reported without stopping the rest of the import", async (context) => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "sardrop-test-"));
+  context.after(() => rm(dataDir, { recursive: true, force: true }));
+
+  const youtube = stubYoutube({
+    async downloadTrack(videoId, { directory }) {
+      if (videoId === "aaaaaaaaaaa") throw new Error("Video unavailable");
+      const filePath = path.join(directory, "track.mp3");
+      await writeFile(filePath, tinyMp3);
+      return filePath;
+    },
+  });
+  const app = await startApp(dataDir, { playlistImport: true, youtube });
+  context.after(async () => {
+    app.importer?.cancelAll();
+    if (app.server.listening) await app.close();
+  });
+  const cookie = await login(app);
+
+  const started = await fetch(`${app.origin}/api/playlists/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: app.origin, Cookie: cookie },
+    body: JSON.stringify({ url: "https://www.youtube.com/playlist?list=PLnightdrive" }),
+  });
+  assert.equal(started.status, 202);
+  const { job } = await started.json();
+
+  const finished = await waitForJob(app, cookie, job.id);
+  assert.equal(finished.state, "done");
+  assert.equal(finished.completed, 1);
+  assert.equal(finished.failed, 1);
+  assert.equal(finished.tracks[0].status, "failed");
+  assert.equal(finished.tracks[0].error, "Video unavailable");
+  assert.equal(finished.tracks[1].status, "done");
+
+  const uploads = await (await fetch(`${app.origin}/api/uploads`, { headers: { Cookie: cookie } })).json();
+  assert.equal(uploads.uploads.length, 1);
+  assert.equal(uploads.uploads[0].title, "Second track");
+  // Imports default to link-only when the request does not name a visibility.
+  assert.equal(uploads.uploads[0].visibility, "unlisted");
+});
+
+test("one import runs at a time and can be stopped mid-flight", async (context) => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "sardrop-test-"));
+  context.after(() => rm(dataDir, { recursive: true, force: true }));
+  const youtube = gatedYoutube();
+  const app = await startApp(dataDir, { playlistImport: true, youtube });
+  context.after(async () => {
+    youtube.release();
+    app.importer?.cancelAll();
+    if (app.server.listening) await app.close();
+  });
+  const cookie = await login(app);
+
+  const started = await fetch(`${app.origin}/api/playlists/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: app.origin, Cookie: cookie },
+    body: JSON.stringify({ url: "https://www.youtube.com/playlist?list=PLnightdrive" }),
+  });
+  assert.equal(started.status, 202);
+  const { job } = await started.json();
+
+  const concurrent = await fetch(`${app.origin}/api/playlists/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: app.origin, Cookie: cookie },
+    body: JSON.stringify({ url: "https://www.youtube.com/playlist?list=PLother12345" }),
+  });
+  assert.equal(concurrent.status, 409);
+
+  const stopped = await fetch(`${app.origin}/api/playlists/jobs/${job.id}`, {
+    method: "DELETE",
+    headers: { Origin: app.origin, Cookie: cookie },
+  });
+  assert.equal(stopped.status, 200);
+
+  const finished = await waitForJob(app, cookie, job.id);
+  assert.equal(finished.state, "cancelled");
+  assert.equal(finished.completed, 0);
+  assert.deepEqual(finished.tracks.map((track) => track.status), ["cancelled", "cancelled"]);
+
+  const uploads = await (await fetch(`${app.origin}/api/uploads`, { headers: { Cookie: cookie } })).json();
+  assert.equal(uploads.uploads.length, 0);
 });

@@ -40,7 +40,7 @@
         "Choose Add to Home Screen, turn on Open as Web App if shown, then tap Add.",
       ] : android ? [
         "Open this site in Chrome or another browser that supports app installation.",
-        "Open the browser menu (⋮) and choose Install app or Add to Home screen, then confirm.",
+        "Open the browser menu (⋮), scroll down, and choose Install and create shortcut → Install. Older versions call it Install app or Add to Home screen.",
       ] : [
         "In Chrome or Edge, use the install icon in the address bar or the browser menu’s install option.",
         "In Safari on Mac, choose File → Add to Dock. If your browser has no install option, open this site in Chrome or Edge.",

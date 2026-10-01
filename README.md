@@ -30,7 +30,7 @@ Downloading from YouTube is governed by YouTube's terms of service and by the co
 
 ## Install on mobile or desktop
 
-Choose **Install app** in the public index or owner archive. Chrome on Android and supported desktop browsers open their native install prompt when available; otherwise the button shows browser-specific instructions. On iPhone or iPad, use Safari’s **Share → Add to Home Screen**. On Mac, Safari also offers **File → Add to Dock**.
+Choose **Install app** in the public index or owner archive. Chrome on Android and supported desktop browsers open their native install prompt when available; otherwise the button shows browser-specific instructions. In current Android Chrome, scroll down the **⋮** menu and choose **Install and create shortcut → Install**; older versions call it **Install app** or **Add to Home screen**. On iPhone or iPad, use Safari’s **Share → Add to Home Screen**. On Mac, Safari also offers **File → Add to Dock**.
 
 The installed app opens in its own window and uses the same owner authentication and visibility rules. Browsing and uploads require an internet connection. Serve over HTTPS for production installation; localhost works for development. Chrome may wait for a tap and some time on the page before offering its native prompt.
 

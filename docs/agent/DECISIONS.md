@@ -1,5 +1,9 @@
 # Architectural decisions
 
+## 2026-10-01 - Current Android Chrome menu wording
+
+The user's screenshot confirmed the site's Install app control is visible; they subsequently confirmed it opens instructions and reported no Add to Home screen menu entry. Current Google Chrome help calls the Android action Install and create shortcut → Install. The Android fallback now names that action, tells users to scroll the menu, and retains the older Install app/Add to Home screen labels. This corrects the instructions; it does not establish why the user's browser has not emitted its native install event. Source: https://support.google.com/chrome/answer/9658361?co=GENIE.Platform%3DAndroid&hl=en.
+
 ## 2026-10-01 - Reliable install initialization and Android compatibility
 
 After a report that Android Chrome did not show installation, a live mobile-emulated check showed the current button and valid manifest but did not reproduce the user's device. An early-execution reproduction did expose a separate failure: the script selected header/dialog nodes before parsing, set its initialization guard, then threw, leaving both buttons hidden. Initialization now waits for the document when needed, remains idempotent, and the HTML shows the controls by default. The script version is bumped to bypass prior cached bytes.
